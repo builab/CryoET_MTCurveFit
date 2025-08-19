@@ -50,51 +50,13 @@ def get_model_name(model_id):
     print("ERROR: No model id found")
     return None
 
-def parse_arguments():
-    """Parse command line arguments for voxelSize and minseed"""
-    # Default values
-    voxel_size = 1.0
-    min_seed = 5
-    
-    # Parse arguments
-    args = sys.argv[1:]  # Skip script name
-    
-    if len(args) < 1:
-        print("Usage: python mcurvefit.py <input_model_id> [voxelSize <value> minseed <value>]")
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: python mcurvefit_simple.py <input_model_id>")
         sys.exit(1)
     
-    input_model_id = args[0]
-    
-    # Parse optional arguments
-    i = 1
-    while i < len(args):
-        if args[i] == "voxelSize" and i + 1 < len(args):
-            try:
-                voxel_size = float(args[i + 1])
-                i += 2
-            except ValueError:
-                print(f"Error: Invalid voxelSize value '{args[i + 1]}'. Using default value {voxel_size}")
-                i += 2
-        elif args[i] == "minseed" and i + 1 < len(args):
-            try:
-                min_seed = int(args[i + 1])
-                i += 2
-            except ValueError:
-                print(f"Error: Invalid minseed value '{args[i + 1]}'. Using default value {min_seed}")
-                i += 2
-        else:
-            print(f"Warning: Unknown argument '{args[i]}' ignored")
-            i += 1
-    
-    return input_model_id, voxel_size, min_seed
-
-def main():
-    # Parse command line arguments
-    input_model_id, voxel_size, min_seed = parse_arguments()
-    
+    input_model_id = sys.argv[1]
     print(f'Input model ID: {input_model_id}')
-    print(f'Voxel size: {voxel_size}')
-    print(f'Min seed: {min_seed}')
 
     input_star_file = get_model_name(idstr2tuple(input_model_id))
 
@@ -234,8 +196,8 @@ def main():
     try:
         result = process_star_file(
             input_star_file,
-            pixel_size_ang=voxel_size,
-            min_number_seed=min_seed
+            pixel_size_ang=1.0,
+            min_number_seed=5
         )
         
         if result is None:

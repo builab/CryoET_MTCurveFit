@@ -18,6 +18,9 @@ minseed 5 (default)
 poly 3 (default)
 sampleStep 82 (default)
 
+time python ~/Documents/GitHub/CryoET_MTCurveFit/helical_overlap.py --angpix 14 --dist_thres 60 CCDC147C_001_particles_init_fit.star 
+
+time python ~/Documents/GitHub/CryoET_MTCurveFit/connect_lines.py --dist_extrapolate 1500 --angpix 14 --min_seed 5 --overlap_thres 80 --sample_step 82 CCDC147C_001_particles_init_fit_filtered50A.star
 
 For star_predict_angles.py
 

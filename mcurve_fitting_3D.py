@@ -2,19 +2,21 @@
 # coding: utf-8
 
 """
-mcurve_fitting_3D.py
+Improve mcurve_fitting_3D.py from KaiZhang lab https://github.com/PengxinChai
+vectorized distance calculation create 3-10x speed up (100-3000 points)
 Multi-curve fitting of 3D coordinates from STAR files for filamentous structures.
+@Builab 2025
 """
 
 import sys
 import os
+import re
 import math
 import argparse
 from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
 import pandas as pd
 import starfile
-
 
 class TerminalColors:
     """ANSI color codes for terminal output."""
@@ -51,7 +53,7 @@ def get_args() -> argparse.Namespace:
 
     # Seed searching options
     seed_group = parser.add_argument_group('Options for seed searching and evaluation')
-    seed_group.add_argument("--min_number_seed", type=int, default=5,
+    seed_group.add_argument("--min_number_seed", type=int, default=6,
                            help="Minimum number of points to form a valid seed.")
     seed_group.add_argument("--max_dis_to_line_ang", type=float, default=50,
                            help="Max distance from initial seed line, in Angstroms.")
@@ -59,7 +61,7 @@ def get_args() -> argparse.Namespace:
                            help="Min distance between neighboring seed points, in Angstroms.")
     seed_group.add_argument("--max_dis_neighbor_seed_ang", type=float, default=320,
                            help="Max distance between neighboring seed points, in Angstroms.")
-    seed_group.add_argument("--poly_expon_seed", type=int, default=2,
+    seed_group.add_argument("--poly_expon_seed", type=int, default=3,
                            help="Polynomial factor for seed quality evaluation.")
     seed_group.add_argument("--max_seed_fitting_error", type=float, default=1.0,
                            help="Maximum fitting error for valid seed.")
@@ -281,7 +283,7 @@ def resample(
                 'rlnAngleRot': 0,
                 'rlnAngleTilt': angle_zxy + 90,
                 'rlnAnglePsi': angle_yx,
-                'rlnHelicalTubeID': cluster_id,
+                'rlnHelicalTubeID': cluster_id + 1,
                 'rlnTomoName': tomo_name
             }
             
@@ -589,8 +591,13 @@ def load_coordinates(
             print(f"  - Removed .tomostar extension from rlnTomoName: {tomo_name}")
     
     if tomo_name is None:
-        tomo_name = os.path.splitext(os.path.basename(file_path))[0]
-        print(f"  - No rlnMicrographName or rlnTomoName found, using filename: {tomo_name}")
+        match = re.match(r"^(.+?_\d{2,3})", os.path.basename(file_path))
+        if match:
+            tomo_name = match.group(1)
+        else:
+            tomo_name = os.path.splitext(os.path.basename(file_path))[0]
+
+        print(f"  - No rlnMicrographName or rlnTomoName found, using modified filename: {tomo_name}")
     
     return coords, tomo_name, detector_pixel_size
 

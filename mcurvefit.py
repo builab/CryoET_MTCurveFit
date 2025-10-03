@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 # coding: utf-8
-# First working version
 # ChimeraX version
 
-# testing mcurve_fitting_3D.py for ChimeraX
+"""
+Run mcurve_fitting_3D.py within ChimeraX
+@Builab 2025
+"""
 import sys, os
 
 # Get the directory where the current script is located
@@ -14,10 +16,10 @@ sys.path.append(script_dir)
 
 # Add error handling and debugging
 try:
-    import mcurve_fitting_modified
-    print("Successfully imported mcurve_fitting_modified")
+    import mcurve_fitting_3D
+    print("Successfully imported mcurve_fitting_3D")
 except ImportError as e:
-    print(f"Failed to import mcurve_fitting_modified: {e}")
+    print(f"Failed to import mcurve_fitting_3D: {e}")
     print(f"Python path: {sys.path}")
     print(f"Current directory: {os.getcwd()}")
     print(f"Script directory: {script_dir}")
@@ -51,51 +53,64 @@ def get_model_name(model_id):
     return None
 
 def parse_arguments():
-    """Parse command line arguments for voxelSize and minseed"""
-    # Default values
-    voxel_size = 1.0
-    min_seed = 5
+    """Parse command line arguments for voxelSize, minseed, sampleStep, poly."""
     
-    # Parse arguments
-    args = sys.argv[1:]  # Skip script name
-    
-    if len(args) < 1:
-        print("Usage: python mcurvefit.py <input_model_id> [voxelSize <value> minseed <value>]")
+    if len(sys.argv) < 2:
+        print("Usage: python mcurvefit.py <input_model_id> [voxelSize <value> minseed <value> sampleStep <value> poly <value>]")
         sys.exit(1)
     
-    input_model_id = args[0]
-    
-    # Parse optional arguments
-    i = 1
+    input_model_id = sys.argv[1]
+    args = sys.argv[2:]  # Remaining optional arguments
+
+    # Default values
+    voxel_size = 14.0
+    min_seed = 5
+    sample_step = 82
+    poly = 3
+
+    # Process arguments in pairs
+    i = 0
     while i < len(args):
-        if args[i] == "voxelSize" and i + 1 < len(args):
-            try:
-                voxel_size = float(args[i + 1])
-                i += 2
-            except ValueError:
-                print(f"Error: Invalid voxelSize value '{args[i + 1]}'. Using default value {voxel_size}")
-                i += 2
-        elif args[i] == "minseed" and i + 1 < len(args):
-            try:
-                min_seed = int(args[i + 1])
-                i += 2
-            except ValueError:
-                print(f"Error: Invalid minseed value '{args[i + 1]}'. Using default value {min_seed}")
-                i += 2
+        key = args[i]
+        if i + 1 < len(args):
+            value = args[i + 1]
+            if key == "voxelSize":
+                try:
+                    voxel_size = float(value)
+                except ValueError:
+                    print(f"Error: Invalid voxelSize '{value}'. Using default {voxel_size}")
+            elif key == "minseed":
+                try:
+                    min_seed = int(value)
+                except ValueError:
+                    print(f"Error: Invalid minseed '{value}'. Using default {min_seed}")
+            elif key == "sampleStep":
+                try:
+                    sample_step = float(value)
+                except ValueError:
+                    print(f"Error: Invalid sampleStep '{value}'. Using default {sample_step}")
+            elif key == "poly":
+                try:
+                    poly = int(value)
+                except ValueError:
+                    print(f"Error: Invalid poly '{value}'. Using default {poly}")
+            i += 2
         else:
-            print(f"Warning: Unknown argument '{args[i]}' ignored")
+            print(f"Warning: Argument '{args[i]}' has no value, skipping.")
             i += 1
-    
-    return input_model_id, voxel_size, min_seed
+
+    return input_model_id, voxel_size, min_seed, sample_step, poly
 
 def main():
     # Parse command line arguments
-    input_model_id, voxel_size, min_seed = parse_arguments()
+    input_model_id, voxel_size, min_seed, sample_step, poly= parse_arguments()
     
     print(f'Input model ID: {input_model_id}')
-    print(f'Voxel size: {voxel_size}')
+    print(f'Voxel size (Angstrom): {voxel_size}')
     print(f'Min seed: {min_seed}')
-
+    print(f'Sample Step (Angstrom): {sample_step}')
+    print(f'Polynominal Fitting: {poly}')
+    
     input_star_file = get_model_name(idstr2tuple(input_model_id))
 
     # Ensure TEMPDIR exists
@@ -177,10 +192,10 @@ def main():
         try:
             # Load coordinates with error handling
             try:
-                coords, tomo_name, detector_pixel_size = mcurve_fitting_modified.load_coordinates(
+                coords, tomo_name, detector_pixel_size = mcurve_fitting_3D.load_coordinates(
                     input_file, params['pixel_size_ang']
                 )
-            except Exception as e:
+            except Exception as e:    
                 print(f"Error loading coordinates: {e}")
                 return None
             
@@ -192,7 +207,7 @@ def main():
             
             # Perform curve fitting with error handling
             try:
-                df_resam, assigned_clusters, cluster_count = mcurve_fitting_modified.fit_curves(
+                df_resam, assigned_clusters, cluster_count = mcurve_fitting_3D.fit_curves(
                     coords, tomo_name, detector_pixel_size, params
                 )
             except Exception as e:
@@ -211,7 +226,7 @@ def main():
                 output_star_file = os.path.join(TEMPDIR, output_base_name)
                 
                 print(f"Writing output to: {output_star_file}")
-                mcurve_fitting_modified.write_outputs(os.path.splitext(input_star_file)[0], df_resam, cluster_count)
+                mcurve_fitting_3D.write_outputs(os.path.splitext(input_star_file)[0], df_resam, cluster_count)
                 print(f"Successfully wrote outputs for {output_base_name} in {TEMPDIR}")
                 
                 return df_resam, assigned_clusters, cluster_count, output_star_file

@@ -14,10 +14,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # Add this directory to the Python path
 sys.path.append(script_dir)
 
-# Configuration: Change these settings as needed
-TEMPDIR = "/tmp"
-CLEANUP_TEMP_FILES = True  # Set to False to keep temporary files for debugging
-
 # Add error handling and debugging
 try:
     import mcurve_fitting_3D
@@ -28,6 +24,9 @@ except ImportError as e:
     print(f"Current directory: {os.getcwd()}")
     print(f"Script directory: {script_dir}")
     sys.exit(1)
+
+# Configuration: Change this path as needed
+TEMPDIR = "/tmp"
 
 # Check if running in ChimeraX context
 try:
@@ -102,20 +101,6 @@ def parse_arguments():
 
     return input_model_id, voxel_size, min_seed, sample_step, poly
 
-def cleanup_temp_files(file_list):
-    """Delete temporary files."""
-    if not CLEANUP_TEMP_FILES:
-        print("Cleanup disabled - temporary files retained")
-        return
-    
-    for file_path in file_list:
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                print(f"🗑️  Deleted temporary file: {file_path}")
-        except Exception as e:
-            print(f"Warning: Could not delete {file_path}: {e}")
-
 def main():
     # Parse command line arguments
     input_model_id, voxel_size, min_seed, sample_step, poly= parse_arguments()
@@ -132,14 +117,10 @@ def main():
     os.makedirs(TEMPDIR, exist_ok=True)
     print(f"Using temporary directory: {TEMPDIR}")
     
-    # List to track temporary files for cleanup
-    temp_files = []
-    
     # Get the absolute path for the input star file in TEMPDIR
     if CHIMERAX_AVAILABLE:
         try:
             input_star_file = os.path.join(TEMPDIR, f'{input_star_file}')
-            temp_files.append(input_star_file)  # Track for cleanup
             print(f'Saving particle list to {input_star_file}')
             run(session, f'save "{input_star_file}" partlist {input_model_id}')
             print(f"Successfully saved {input_star_file}")
@@ -243,7 +224,6 @@ def main():
                 
                 # Create full output path in TEMPDIR
                 output_star_file = os.path.join(TEMPDIR, output_base_name)
-                temp_files.append(output_star_file)  # Track for cleanup
                 
                 print(f"Writing output to: {output_star_file}")
                 mcurve_fitting_3D.write_outputs(os.path.splitext(input_star_file)[0], df_resam, cluster_count)
@@ -275,7 +255,6 @@ def main():
         
         if result is None:
             print("Processing failed")
-            cleanup_temp_files(temp_files)
             return
             
         df_resam, assigned_clusters, cluster_count, output_star_file = result
@@ -288,23 +267,15 @@ def main():
                     model = run(session, f'open "{output_star_file}"')[0]
                     model_id = f"#{model.id[0]}.{model.id[1]}.{model.id[2]}"
                     print(f'Fitted star file loaded as {model_id}')
-                    
-                    # Clean up temporary files after successful loading
-                    cleanup_temp_files(temp_files)
                 else:
                     print(f"Warning: Output file {output_star_file} not found")
             except Exception as e:
                 print(f"Error loading results into ChimeraX: {e}")
-                cleanup_temp_files(temp_files)
-        else:
-            # If not in ChimeraX, still offer to clean up
-            cleanup_temp_files(temp_files)
         
     except Exception as e:
         print(f"Error during processing: {e}")
         import traceback
         traceback.print_exc()
-        cleanup_temp_files(temp_files)
         return
 
 # Execute main logic - this runs whether imported or executed directly

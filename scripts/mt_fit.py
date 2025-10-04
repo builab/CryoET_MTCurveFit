@@ -10,6 +10,10 @@ Not yet tested clearly
 @Builab 2025
 """
 
+__version__ = "1.0.0"
+__author__ = "Builab"
+__date__ = "2025-01-27"
+
 import sys
 import os
 import argparse

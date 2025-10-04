@@ -2,88 +2,15 @@
 # coding: utf-8
 
 """
-Improve mcurve_fitting_3D.py from KaiZhang lab https://github.com/PengxinChai
-vectorized distance calculation create 3-10x speed up (100-3000 points)
-Multi-curve fitting of 3D coordinates from STAR files for filamentous structures.
+Core curve fitting functions for filamentous structures.
+Multi-curve fitting of 3D coordinates for RELION filament processing.
 @Builab 2025
 """
 
-import sys
-import os
-import re
 import math
-import argparse
 from typing import List, Tuple, Optional, Dict, Any
 import numpy as np
 import pandas as pd
-import starfile
-
-class TerminalColors:
-    """ANSI color codes for terminal output."""
-    PURPLE = '\033[95m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    BOLD = '\033[1m'
-    END = '\033[0m'
-
-
-def get_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description=f"{TerminalColors.BOLD}About this program:{TerminalColors.END}\n"
-                    "This script performs multi-curve fitting of 3D coordinates from STAR files.\n"
-                    "It identifies filamentous structures, clusters the points, and generates resampled coordinates.\n"
-                    "Outputs resampled STAR files only.",
-        formatter_class=argparse.RawTextHelpFormatter
-    )
-
-    parser.add_argument('files', nargs='*', help="Input coordinate files (.star only).")
-
-    # General options
-    gen_group = parser.add_argument_group('General options')
-    gen_group.add_argument("--pixel_size_ang", type=float, default=14.00,
-                          help="Pixel size of the micrograph/coordinate, in Angstroms.")
-    gen_group.add_argument("--sample_step_ang", type=float, default=82,
-                          help="Final sampling step for resampling, in Angstroms.")
-    gen_group.add_argument("--intergration_step_ang", type=float, default=1,
-                          help="Integration step for curve length calculation, in Angstroms.")
-    gen_group.add_argument("--poly_expon", type=int, default=3,
-                          help="Polynomial factor for curve growth and final resampling.")
-
-    # Seed searching options
-    seed_group = parser.add_argument_group('Options for seed searching and evaluation')
-    seed_group.add_argument("--min_number_seed", type=int, default=6,
-                           help="Minimum number of points to form a valid seed.")
-    seed_group.add_argument("--max_dis_to_line_ang", type=float, default=50,
-                           help="Max distance from initial seed line, in Angstroms.")
-    seed_group.add_argument("--min_dis_neighbor_seed_ang", type=float, default=60,
-                           help="Min distance between neighboring seed points, in Angstroms.")
-    seed_group.add_argument("--max_dis_neighbor_seed_ang", type=float, default=320,
-                           help="Max distance between neighboring seed points, in Angstroms.")
-    seed_group.add_argument("--poly_expon_seed", type=int, default=3,
-                           help="Polynomial factor for seed quality evaluation.")
-    seed_group.add_argument("--max_seed_fitting_error", type=float, default=1.0,
-                           help="Maximum fitting error for valid seed.")
-    seed_group.add_argument("--max_angle_change_per_4nm", type=float, default=0.5,
-                           help="Curvature restriction: max angle change per 4nm, in degrees.")
-
-    # Growth options
-    growth_group = parser.add_argument_group('Options for seed growth')
-    growth_group.add_argument("--max_dis_to_curve_ang", type=float, default=80,
-                             help="Max distance from growing curve, in Angstroms.")
-    growth_group.add_argument("--min_dis_neighbor_curve_ang", type=float, default=60,
-                             help="Min distance between neighbors during growth, in Angstroms.")
-    growth_group.add_argument("--max_dis_neighbor_curve_ang", type=float, default=320,
-                             help="Max distance between neighbors during growth, in Angstroms.")
-    growth_group.add_argument("--min_number_growth", type=int, default=0,
-                             help="Min points added during growth phase.")
-
-    if len(sys.argv) == 1:
-        parser.print_help(sys.stderr)
-        sys.exit(1)
-
-    return parser.parse_args()
 
 
 def distance(p1: np.ndarray, p2: np.ndarray) -> float:
@@ -96,7 +23,10 @@ def find_seed(
     j: int,
     coords: np.ndarray,
     assigned_clusters: np.ndarray,
-    params: Dict[str, Any]
+    min_seed: int,
+    max_distance_to_line: float,
+    min_distance_in_extension_seed: float,
+    max_distance_in_extension_seed: float
 ) -> List[int]:
     """
     Find an initial seed of collinear points starting from points i and j.
@@ -121,7 +51,7 @@ def find_seed(
         return []
 
     # Check Z-slice distance for initial pair
-    if abs(k1 - k2) > params['max_distance_to_line']:
+    if abs(k1 - k2) > max_distance_to_line:
         return []
     
     k_avg = (k1 + k2) / 2
@@ -146,8 +76,8 @@ def find_seed(
                              b * candidate_coords[:, 1] + c) / norm_factor
         delta_z = np.abs(candidate_coords[:, 2] - k_avg)
         
-        line_candidates_mask = ((dist_to_line < params['max_distance_to_line']) & 
-                               (delta_z < params['max_distance_to_line']))
+        line_candidates_mask = ((dist_to_line < max_distance_to_line) & 
+                               (delta_z < max_distance_to_line))
         
         candidate_indices = unassigned_indices[potential_points_mask[unassigned_mask]][line_candidates_mask]
 
@@ -164,8 +94,8 @@ def find_seed(
             min_distances = np.min(dist_matrix, axis=1)
             
             # Find valid candidates all at once
-            valid_mask = ((min_distances > params['min_distance_in_extension_seed']) & 
-                         (min_distances < params['max_distance_in_extension_seed']))
+            valid_mask = ((min_distances > min_distance_in_extension_seed) & 
+                         (min_distances < max_distance_in_extension_seed))
             valid_indices = candidate_indices[valid_mask]
             
             if len(valid_indices) > 0:
@@ -174,7 +104,7 @@ def find_seed(
                 seed_indices.append(k)
                 potential_points_mask[k] = False
                 
-                if len(seed_indices) >= params['min_number_seed']:
+                if len(seed_indices) >= min_seed:
                     return seed_indices
                 
                 found_new_point = True
@@ -182,14 +112,16 @@ def find_seed(
         if not found_new_point:
             break
             
-    return seed_indices if len(seed_indices) >= params['min_number_seed'] else []
+    return seed_indices if len(seed_indices) >= min_seed else []
 
 
 def angle_evaluate(
     poly: np.poly1d,
     point: float,
     mode: int,
-    params: Dict[str, Any]
+    angpix: float,
+    max_angle_change_per_4nm: float,
+    integration_step: float = 1.0 
 ) -> int:
     """
     Evaluate curvature of polynomial fit.
@@ -197,8 +129,8 @@ def angle_evaluate(
     Returns:
         1 if curvature is acceptable, 0 otherwise.
     """
-    evaluation_step = 40 / params['pixel_size_ang']
-    step = params['intergration_step']
+    evaluation_step = 40 / angpix
+    step = integration_step
     
     def get_next_pos(val: float) -> Tuple[float, float]:
         next_val = val + step
@@ -224,7 +156,7 @@ def angle_evaluate(
     final_next_pos = get_next_pos(current_pos[0] if mode == 1 else current_pos[1])
     angle_two = math.degrees(math.atan(get_slope(current_pos, final_next_pos)))
     
-    return 1 if abs(angle_two - angle_one) < params['max_angle_change_per_4nm'] else 0
+    return 1 if abs(angle_two - angle_one) < max_angle_change_per_4nm else 0
 
 
 def resample(
@@ -235,14 +167,14 @@ def resample(
     mode: int,
     cluster_id: int,
     tomo_name: str,
-    detector_pixel_size: Optional[float],
-    params: Dict[str, Any]
+    sample_step: float,
+    detector_pixel_size: Optional[float] = None,
+    integration_step: float = 1.0 
 ) -> List[Dict[str, Any]]:
     """Resample points along fitted 3D curve at specified step size."""
     resampled_points = []
     accumulation = 0.0
     current_val = start
-    step = params['intergration_step']
 
     def get_coords(val: float) -> np.ndarray:
         if mode == 1:  # y=f(x)
@@ -255,13 +187,13 @@ def resample(
     current_pos = get_coords(current_val)
 
     while current_val < end:
-        next_val = current_val + step
+        next_val = current_val + integration_step
         next_pos = get_coords(next_val)
         
         dist = distance(current_pos, next_pos)
         accumulation += dist
         
-        if accumulation >= params['sample_step']:
+        if accumulation >= sample_step:
             accumulation = 0.0
             
             # Calculate angles
@@ -304,8 +236,18 @@ def seed_extension(
     assigned_clusters: np.ndarray,
     cluster_id: int,
     tomo_name: str,
-    detector_pixel_size: Optional[float],
-    params: Dict[str, Any]
+    poly_order: int,
+    poly_order_seed: int,
+    seed_evaluation_constant: float,
+    angpix: float,
+    max_angle_change_per_4nm: float,
+    max_distance_to_curve: float,
+    min_distance_in_extension: float,
+    max_distance_in_extension: float,
+    min_number_growth: int,
+    sample_step: float,
+    detector_pixel_size: Optional[float] = None,
+    integration_step: float = 1.0 
 ) -> Tuple[List[int], List[Dict[str, Any]]]:
     """
     Extend seed by iteratively fitting polynomial and adding nearby points.
@@ -332,17 +274,17 @@ def seed_extension(
 
     # --- Seed Evaluation ---
     # 1. Fit with lower order polynomial
-    poly_seed_xy = np.poly1d(np.polyfit(ind_vars, dep_vars_xy, params['poly_expon_seed']))
+    poly_seed_xy = np.poly1d(np.polyfit(ind_vars, dep_vars_xy, poly_order_seed))
     
     # 2. Check fitting error
     errors = np.abs(poly_seed_xy(ind_vars) - dep_vars_xy)
-    if np.any(errors >= params['seed_evaluation_constant']):
+    if np.any(errors >= seed_evaluation_constant):
         return [], []
 
     # 3. Check curvature
-    poly_xy_final = np.poly1d(np.polyfit(ind_vars, dep_vars_xy, params['poly_expon']))
+    poly_xy_final = np.poly1d(np.polyfit(ind_vars, dep_vars_xy, poly_order))
     mid_point = (np.min(ind_vars) + np.max(ind_vars)) / 2
-    if not angle_evaluate(poly_xy_final, mid_point, mode, params):
+    if not angle_evaluate(poly_xy_final, mid_point, mode, angpix, max_angle_change_per_4nm):
         return [], []
 
     # --- Curve Growth ---
@@ -367,8 +309,8 @@ def seed_extension(
             dep_vars_xy_all = all_cluster_coords[:, 0]
         dep_vars_k_all = all_cluster_coords[:, 2]
 
-        poly_xy_growth = np.poly1d(np.polyfit(ind_vars_all, dep_vars_xy_all, params['poly_expon']))
-        poly_k_growth = np.poly1d(np.polyfit(ind_vars_all, dep_vars_k_all, params['poly_expon']))
+        poly_xy_growth = np.poly1d(np.polyfit(ind_vars_all, dep_vars_xy_all, poly_order))
+        poly_k_growth = np.poly1d(np.polyfit(ind_vars_all, dep_vars_k_all, poly_order))
 
         # Vectorize the curve distance computation
         unassigned_coords = coords[unassigned_indices]
@@ -380,8 +322,8 @@ def seed_extension(
         dist_to_curve_k = np.abs(poly_k_growth(ind_vars_unassigned) - unassigned_coords[:, 2])
         
         # Filter points close to curve
-        close_to_curve_mask = ((dist_to_curve_xy < params['max_distance_to_curve']) & 
-                               (dist_to_curve_k < params['max_distance_to_curve']))
+        close_to_curve_mask = ((dist_to_curve_xy < max_distance_to_curve) & 
+                               (dist_to_curve_k < max_distance_to_curve))
         close_indices = unassigned_indices[close_to_curve_mask]
         
         if len(close_indices) > 0:
@@ -397,8 +339,8 @@ def seed_extension(
             min_distances = np.min(dist_matrix, axis=1)
             
             # Find valid points
-            valid_mask = ((min_distances > params['min_distance_in_extension']) & 
-                         (min_distances < params['max_distance_in_extension']))
+            valid_mask = ((min_distances > min_distance_in_extension) & 
+                         (min_distances < max_distance_in_extension))
             valid_indices = close_indices[valid_mask]
             
             # Add all valid points at once
@@ -411,7 +353,7 @@ def seed_extension(
             break
 
     # --- Final Evaluation and Resampling ---
-    if len(cluster_indices) - len(seed_indices) >= params['min_number_growth']:
+    if len(cluster_indices) - len(seed_indices) >= min_number_growth:
         print(f"  - Seed extension successful. Cluster {cluster_id} found with "
               f"{len(cluster_indices)} points.")
         
@@ -426,12 +368,12 @@ def seed_extension(
             dep_xy = final_coords[:, 0]
             dep_k = final_coords[:, 2]
         
-        poly_final_xy = np.poly1d(np.polyfit(ind, dep_xy, params['poly_expon']))
-        poly_final_k = np.poly1d(np.polyfit(ind, dep_k, params['poly_expon']))
+        poly_final_xy = np.poly1d(np.polyfit(ind, dep_xy, poly_order))
+        poly_final_k = np.poly1d(np.polyfit(ind, dep_k, poly_order))
         
         resampled_data = resample(
             poly_final_xy, poly_final_k, np.min(ind), np.max(ind),
-            mode, cluster_id, tomo_name, detector_pixel_size, params
+            mode, cluster_id, tomo_name, sample_step, detector_pixel_size
         )
         return cluster_indices, resampled_data
     else:
@@ -445,9 +387,23 @@ def seed_extension(
 def fit_curves(
     coords: np.ndarray,
     tomo_name: str,
-    detector_pixel_size: Optional[float],
-    params: Dict[str, Any],
-    cluster_id_offset: int = 0
+    angpix: float,
+    poly_order: int,
+    sample_step: float,
+    min_seed: int,
+    max_distance_to_line: float,
+    min_distance_in_extension_seed: float,
+    max_distance_in_extension_seed: float,
+    poly_order_seed: int,
+    seed_evaluation_constant: float,
+    max_angle_change_per_4nm: float,
+    max_distance_to_curve: float,
+    min_distance_in_extension: float,
+    max_distance_in_extension: float,
+    min_number_growth: int,
+    detector_pixel_size: Optional[float] = None,
+    cluster_id_offset: int = 0,
+    integration_step: float = 1.0 
 ) -> Tuple[pd.DataFrame, np.ndarray, int]:
     """
     Core computational engine for curve fitting (I/O-free).
@@ -455,9 +411,23 @@ def fit_curves(
     Args:
         coords: Array of shape (N, 3) with X, Y, Z coordinates.
         tomo_name: Tomogram name for output.
+        angpix: Pixel size in Angstroms.
+        poly_order: Polynomial order for fitting.
+        sample_step: Resampling step size (in pixels).
+        min_seed: Minimum number of points for valid seed.
+        max_distance_to_line: Max distance from seed line (in pixels).
+        min_distance_in_extension_seed: Min distance between seed neighbors (in pixels).
+        max_distance_in_extension_seed: Max distance between seed neighbors (in pixels).
+        poly_order_seed: Polynomial order for seed evaluation.
+        seed_evaluation_constant: Max fitting error for seed.
+        max_angle_change_per_4nm: Max curvature change (degrees).
+        max_distance_to_curve: Max distance from curve during growth (in pixels).
+        min_distance_in_extension: Min distance between neighbors during growth (in pixels).
+        max_distance_in_extension: Max distance between neighbors during growth (in pixels).
+        min_number_growth: Min points to add during growth.
         detector_pixel_size: Detector pixel size for output.
-        params: Processing parameters dictionary.
         cluster_id_offset: Offset for cluster IDs.
+        integration_step: Integration step for curve length (in pixels).
 
     Returns:
         Tuple of (resampled DataFrame, cluster assignments, cluster count).
@@ -493,19 +463,28 @@ def fit_curves(
         # Find potential partners within distance range
         potential_partners = np.where(
             (assigned_clusters == -1) &
-            (distances_from_i > params['min_distance_in_extension_seed']) &
-            (distances_from_i < params['max_distance_in_extension_seed']) &
+            (distances_from_i > min_distance_in_extension_seed) &
+            (distances_from_i < max_distance_in_extension_seed) &
             (np.arange(total_number) > i)  # Only check j > i to avoid duplicates
         )[0]
         
         for j in potential_partners:
-            seed_indices = find_seed(i, j, coords, assigned_clusters, params)
+            seed_indices = find_seed(
+                i, j, coords, assigned_clusters,
+                min_seed, max_distance_to_line,
+                min_distance_in_extension_seed, max_distance_in_extension_seed
+            )
             
             if seed_indices:
                 current_cluster_id = cluster_id_counter + cluster_id_offset
                 final_indices, resampled_data = seed_extension(
                     seed_indices, coords, assigned_clusters,
-                    current_cluster_id, tomo_name, detector_pixel_size, params
+                    current_cluster_id, tomo_name,
+                    poly_order, poly_order_seed, seed_evaluation_constant,
+                    angpix, max_angle_change_per_4nm,
+                    max_distance_to_curve, min_distance_in_extension,
+                    max_distance_in_extension, min_number_growth,
+                    sample_step, detector_pixel_size
                 )
                 
                 if final_indices:
@@ -518,168 +497,3 @@ def fit_curves(
     df_resam = pd.DataFrame(all_resampled_points)
     return df_resam, assigned_clusters, cluster_id_counter
 
-
-def validate_star_file(df: pd.DataFrame, file_path: str) -> bool:
-    """
-    Validate STAR file contains required columns.
-    
-    Returns:
-        True if valid, False otherwise.
-    """
-    essential_columns = ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']
-    optional_columns = [
-        'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi', 'rlnLCCmax',
-        'rlnDetectorPixelSize', 'rlnMicrographName', 'rlnTomoName'
-    ]
-    
-    # Check essential columns
-    missing_essential = [col for col in essential_columns if col not in df.columns]
-    
-    if missing_essential:
-        print(f"{TerminalColors.RED}Error: {file_path} is missing essential columns: "
-              f"{', '.join(missing_essential)}. Skipping file.{TerminalColors.END}")
-        return False
-    
-    # Warn about optional columns
-    missing_optional = [col for col in optional_columns if col not in df.columns]
-    
-    if missing_optional:
-        print(f"{TerminalColors.CYAN}Warning: {file_path} is missing optional columns: "
-              f"{', '.join(missing_optional)}{TerminalColors.END}")
-    
-    return True
-
-
-def load_coordinates(
-    file_path: str,
-    pixel_size_ang: float
-) -> Tuple[Optional[np.ndarray], Optional[str], Optional[float]]:
-    """
-    Load coordinates from STAR file into NumPy array.
-    
-    Returns:
-        Tuple of (coordinates array, tomogram name, detector pixel size).
-    """
-    if not file_path.endswith(".star"):
-        raise ValueError(f"Unsupported file format: {file_path}. Only .star files supported.")
-    
-    df = starfile.read(file_path)
-    if 'rlnCoordinateX' not in df and 'particles' in df:
-        df = df['particles']
-    
-    if not validate_star_file(df, file_path):
-        return None, None, None
-    
-    coords = df[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].to_numpy(dtype=float)
-    
-    # Handle detector pixel size
-    if 'rlnDetectorPixelSize' in df.columns:
-        detector_pixel_size = df['rlnDetectorPixelSize'].iloc[0]
-    else:
-        detector_pixel_size = pixel_size_ang
-        print(f"  - rlnDetectorPixelSize not found, using --pixel_size_ang: {pixel_size_ang}")
-    
-    # Handle tomogram name (priority: rlnMicrographName > rlnTomoName > filename)
-    tomo_name = None
-    
-    if 'rlnMicrographName' in df.columns:
-        tomo_name = df['rlnMicrographName'].iloc[0]
-    elif 'rlnTomoName' in df.columns:
-        tomo_name = df['rlnTomoName'].iloc[0]
-        if tomo_name.endswith('.tomostar'):
-            tomo_name = tomo_name[:-9]
-            print(f"  - Removed .tomostar extension from rlnTomoName: {tomo_name}")
-    
-    if tomo_name is None:
-        match = re.match(r"^(.+?_\d{2,3})", os.path.basename(file_path))
-        if match:
-            tomo_name = match.group(1)
-        else:
-            tomo_name = os.path.splitext(os.path.basename(file_path))[0]
-
-        print(f"  - No rlnMicrographName or rlnTomoName found, using modified filename: {tomo_name}")
-    
-    return coords, tomo_name, detector_pixel_size
-
-
-def write_outputs(base_name: str, df_resam: pd.DataFrame, cluster_count: int) -> None:
-    """Write resampled STAR file with _init_fit suffix."""
-    if cluster_count == 0 or df_resam.empty:
-        print("  - No clusters found, no output file written.")
-        return
-        
-    print(f"  - Found {cluster_count} clusters. Writing output file...")
-    
-    output_file = f"{base_name}_init_fit.star"
-    starfile.write(df_resam, output_file, overwrite=True)
-    print(f"  - Written: {output_file} [{len(df_resam)} points, {cluster_count} clusters]")
-
-
-def process_file(file_path: str, params: Dict[str, Any]) -> None:
-    """Orchestrate the entire process for a single file: load, fit, write."""
-    print(f"{TerminalColors.GREEN}Processing file: {file_path}{TerminalColors.END}")
-    base_name = os.path.splitext(file_path)[0]
-    
-    try:
-        coords, tomo_name, detector_pixel_size = load_coordinates(file_path, params['pixel_size_ang'])
-        if coords is None:
-            print(f"  - Skipping {file_path} due to missing essential columns.")
-            return
-        print(f"  - Loaded {len(coords)} particles from {tomo_name} "
-              f"(pixel size: {detector_pixel_size}).")
-    except Exception as e:
-        print(f"{TerminalColors.RED}Error loading {file_path}: {e}{TerminalColors.END}")
-        return
-
-    # Call core engine
-    df_resam, assigned_clusters, cluster_count = fit_curves(
-        coords, tomo_name, detector_pixel_size, params
-    )
-    
-    # Write results
-    write_outputs(base_name, df_resam, cluster_count)
-
-
-def main() -> None:
-    """Main function to run script from command line."""
-    args = get_args()
-    
-    # Convert Angstrom values to pixel values
-    pixel_size = args.pixel_size_ang
-    params = {
-        "pixel_size_ang": pixel_size,
-        "poly_expon": args.poly_expon,
-        "sample_step": args.sample_step_ang / pixel_size,
-        "intergration_step": args.intergration_step_ang / pixel_size,
-        "min_number_seed": args.min_number_seed,
-        "max_distance_to_line": args.max_dis_to_line_ang / pixel_size,
-        "min_distance_in_extension_seed": args.min_dis_neighbor_seed_ang / pixel_size,
-        "max_distance_in_extension_seed": args.max_dis_neighbor_seed_ang / pixel_size,
-        "poly_expon_seed": args.poly_expon_seed,
-        "seed_evaluation_constant": args.max_seed_fitting_error,
-        "max_angle_change_per_4nm": args.max_angle_change_per_4nm,
-        "max_distance_to_curve": args.max_dis_to_curve_ang / pixel_size,
-        "min_distance_in_extension": args.min_dis_neighbor_curve_ang / pixel_size,
-        "max_distance_in_extension": args.max_dis_neighbor_curve_ang / pixel_size,
-        "min_number_growth": args.min_number_growth,
-    }
-
-    print(f"{TerminalColors.BOLD}Starting curve fitting with the following parameters:"
-          f"{TerminalColors.END}")
-    for key, val in vars(args).items():
-        if key != 'files':
-            print(f"  --{key}: {val}")
-
-    for file_path in args.files:
-        if not os.path.exists(file_path):
-            print(f"{TerminalColors.RED}File not found: {file_path}{TerminalColors.END}")
-            continue
-        process_file(file_path, params)
-
-    print(f"\n{TerminalColors.BOLD}Finished!{TerminalColors.END}")
-    print(f"{TerminalColors.CYAN}<<<<< If you find this script useful, "
-          f"please acknowledge... >>>>>{TerminalColors.END}")
-
-
-if __name__ == "__main__":
-    main()

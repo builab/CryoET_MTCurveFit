@@ -35,10 +35,9 @@ sys.path.append(script_dir)
 TEMPDIR = "/tmp"
 CLEANUP_TEMP_FILES = True  # Set to False to keep temporary files for debugging
 
-# Add error handling and debugging
+# Import utils modules
 try:
     from utils.fit import fit_curves
-    # Functions for STEP 2 & 3: CLEAN & CONNECT
     from utils.connect import (
         find_line_connections,
         merge_connected_lines,
@@ -49,13 +48,9 @@ try:
         identify_tubes_to_delete,
         remove_overlapping_tubes
     )
-    # Functions for IO
     from utils.io import read_star, write_star, load_coordinates
 except ImportError as e:
-    print(f"Failed to import: {e}")
-    print(f"Python path: {sys.path}")
-    print(f"Current directory: {os.getcwd()}")
-    print(f"Script directory: {script_dir}")
+    print(f"Failed to import utils: {e}")
     sys.exit(1)
 
 # Check if running in ChimeraX context

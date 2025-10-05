@@ -4,7 +4,7 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Change to the script directory
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/scripts"
 echo $SCRIPT_DIR
 
 # Add execute permissions to Python scripts in the current directory

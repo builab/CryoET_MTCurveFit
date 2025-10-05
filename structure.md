@@ -1,6 +1,7 @@
 CryoET_MTFit/
 ├── install.sh			# Installing script
 ├── source-env.sh		# Source script
+├── README.md			# TO DO
 ├── README.md			
 ├── structure.md		# Source script
 ├── examples/			# Test example

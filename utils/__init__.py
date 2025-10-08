@@ -37,6 +37,10 @@ from .connect import (
     refit_and_resample_tubes
 )
 
+from .view import (
+    view_star_df
+)
+
 __all__ = [
     # Fit functions
     'distance',
@@ -61,7 +65,9 @@ __all__ = [
     'validate_star_file',
     'load_coordinates',
     'read_star',
-    'write_star'   
+    'write_star',
+    # View functions
+    'view_star_df' 
 ]
 
 __version__ = '1.0.0'

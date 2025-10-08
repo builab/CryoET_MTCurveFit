@@ -20,6 +20,17 @@ mt_fit.py predict CCDC147C_001_particles_fitted_cleaned_connected.star --templat
 Combining everything in a pipeline (to add predict later)
 mt_fit.py pipeline CCDC147C_001_particles.star --angpix 14 --sample_step 82 --min_seed 6 --poly_order 3 --clean_dist_thres 50 --dist_extrapolate 2000 --overlap_thres 100 
 
+Visualize result
+Visualize initial fit
+view_star.py CCDC147C_001_particles.star
+
+View final results
+view_star.py CCDC147C_001_particles_processed.star
+
+Or write out if running from a server
+view_star.py --output final.html CCDC147C_001_particles_processed.star
+
+
 Using inside ChimeraX
 cd ~/Documents/GitHub/CryoET_MTCurveFit/scripts
 runscript mtfitchimerax.py #1.2.1 voxelSize 14 sampleStep 82 minseed 6 poly 3 cleanDistThres 50 distExtrapolate 2000 overlapThres 100

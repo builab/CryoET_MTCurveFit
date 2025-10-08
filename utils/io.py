@@ -28,7 +28,7 @@ def validate_star_file(df: pd.DataFrame, file_path: str) -> bool:
     essential_columns = ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']
     optional_columns = [
         'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi', 'rlnLCCmax',
-        'rlnDetectorPixelSize', 'rlnMicrographName', 'rlnTomoName'
+        'rlnDetectorPixelSize', 'rlnMicrographName', 'rlnTomoName', 'rlnHelicalTubeID'
     ]
     
     # Check essential columns

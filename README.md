@@ -47,6 +47,9 @@ mt_fit.py pipeline CCDC147C_001_particles.star --angpix 14 --sample_step 82 --mi
 ## USING INSDIDE CHIMERAX
 Open ChimeraX with ArtiaX, load your template matching star file.
 
+![ChimeraX star file visualization](imgs/TMstarfileChimeraX.png)
+
+
 For now, we would use like this by typing in the command windows of ChimeraX:
 ```bash
 cd ~/Documents/GitHub/CryoET_MTCurveFit/scripts

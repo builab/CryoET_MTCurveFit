@@ -38,7 +38,7 @@ from .connect import (
 )
 
 from .view import (
-    view_star_df
+    visualize_star_df
 )
 
 __all__ = [
@@ -67,7 +67,7 @@ __all__ = [
     'read_star',
     'write_star',
     # View functions
-    'view_star_df' 
+    'visualize_star_df' 
 ]
 
 __version__ = '1.0.0'

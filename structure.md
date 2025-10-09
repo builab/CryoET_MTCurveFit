@@ -1,11 +1,12 @@
 CryoET_MTFit/
 ├── install.sh			# Installing script
 ├── source-env.sh		# Source script
+├── requirements.txt	# Requirements
 ├── TODO.md			# TO DO
 ├── README.md			
 ├── structure.md		# Source script
 ├── examples/			# Test example
-│   ├── CCDC146C_001_particles.star     # Template matching file
+│   └── CCDC146C_001_particles.star     # Template matching file
 ├── utils/
 │   ├── __init__.py     # Module exports
 │   ├── fit.py          # Initial Curve fitting logic

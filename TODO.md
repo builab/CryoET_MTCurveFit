@@ -3,5 +3,5 @@
 - Further more for angle prediction (for other filament), we can do median filter and then smoothing, option --smooth
 --There can be another kinds of prediction (--dphi and --dz) like the filament model in ChimeraX (later) (Determine polarity)
 - For cilia (9), perform a renumber rlnHelicalID (later) cilia_cluster_renumber (Later)
-- ChimeraX bundle (Molly)
+- ChimeraX bundle (Does this worth the effort? Probably not)
 - Test with data

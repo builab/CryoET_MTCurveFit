@@ -1,0 +1,59 @@
+<!--
+ChimeraX bundle names must start with "ChimeraX-"
+to avoid clashes with package names in pypi.python.org.
+When uploaded to the ChimeraX toolshed, the bundle
+will be displayed without the ChimeraX- prefix.
+-->
+
+<BundleInfo name="MtFit"
+	    version="0.1.0" package="chimerax.mtfit"
+  	    minSessionVersion="1" maxSessionVersion="1">
+
+  <!-- Additional information about bundle source -->
+  <Author>Bui lab@McGill</Author>
+  <Email>huy.bui@mcgill.ca</Email>
+  <URL>https://github.com/builab/cryoET_MTCurveFit</URL>
+
+  <!-- Synopsis is a one-line description
+       Description is a full multi-line description -->
+  <Synopsis>MT Fitting of Template Matching Star Files</Synopsis>
+  <Description>
+  Implements MtFit ChimeraX plugin.
+  </Description>
+
+  <!-- Categories is a list where this bundle should appear -->
+  <Categories>
+    <Category name="General"/>
+  </Categories>
+
+  <!-- Dependencies on other ChimeraX/Python packages -->
+  <Dependencies>
+    <Dependency name="ChimeraX-Core" version="~=1.1"/>
+    <Dependency name="ChimeraX-UI" version="~=1.0"/>
+    <Dependency name="starfile" version="==0.5.10"/>
+    <Dependency name="pandas" version="==2.2.3"/>
+    <Dependency name="numpy" pandas="==1.22"/>
+    <Dependency name="scipy" pandas="==1.7.1"/>
+  </Dependencies>
+
+  <!-- Non-Python files that are part of package -->
+  <DataFiles>
+    <DataFile>docs/user/tools/MtFit.html</DataFile>
+  </DataFiles>
+
+  <Classifiers>
+    <!-- Development Status should be compatible with bundle version number -->
+    <PythonClassifier>Development Status :: 3 - Alpha</PythonClassifier>
+    <PythonClassifier>License :: Freeware</PythonClassifier>
+    <!-- ChimeraX classifiers describe supplied functionality -->
+    <!-- Register a graphical interface tool -->
+    <ChimeraXClassifier>ChimeraX :: Tool :: MtFit ::
+      Volume Data :: Differentiable Fit in Map</ChimeraXClassifier>
+
+    <ChimeraXClassifier>ChimeraX :: Command :: mtfit :: General ::
+      Fit Mt lines on template matching data</ChimeraXClassifier>
+
+
+  </Classifiers>
+
+</BundleInfo>

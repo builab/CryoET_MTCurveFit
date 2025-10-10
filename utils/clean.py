@@ -231,3 +231,29 @@ def remove_overlapping_tubes(
     """
     df_filtered = df[~df['rlnHelicalTubeID'].isin(tubes_to_delete)].copy()
     return df_filtered
+
+def filter_short_lines(df: pd.DataFrame, min_part_per_line: int) -> pd.DataFrame:
+    """
+    Filter out lines (rlnHelicalTubeID groups) with fewer than min_part_per_line particles.
+    If min_part_per_line == 0, returns df unchanged.
+    """
+    if df.empty:
+        print("⚠️ Input DataFrame is empty — skipping short line filtering.")
+        return df
+
+    if 'rlnHelicalTubeID' not in df.columns:
+        raise ValueError("DataFrame must contain a 'rlnHelicalTubeID' column.")
+
+    if not isinstance(min_part_per_line, int) or min_part_per_line < 0:
+        raise ValueError("min_part_per_line must be a non-negative integer.")
+
+    if min_part_per_line == 0:
+        #print("Minimum particles per line = 0 → skipping short line filtering.")
+        return df.copy()
+
+    df_filtered = (
+        df.groupby('rlnHelicalTubeID')
+        .filter(lambda x: len(x) >= min_part_per_line)
+        .reset_index(drop=True)
+    )
+    return df_filtered

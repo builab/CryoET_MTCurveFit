@@ -4,8 +4,8 @@ CLI wrapper for filament processing pipeline with subcommands:
 - fit     : Initial curve fitting and clustering
 - clean   : Remove overlapping tubes
 - connect : Connect broken tube segments
-- predict : Predict angles from template matching
-- pipeline: Run full pipeline (fit -> clean -> connect -> predict)
+- pipeline: Run full pipeline (fit -> clean -> connect)
+Not yet tested clearly
 
 @Builab 2025
 """
@@ -42,17 +42,8 @@ from utils.predict import (
     snap_by_filament_median
 )
 
-from utils.io import read_star, write_star, validate_dataframe, load_coordinates
+from utils.io import read_star, write_star, load_coordinates
 
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-
-DEFAULT_LCC_KEEP_TOP = 70.0  # Percentage of top LCC particles to keep
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
 
 def print_step_header(step_num: int, step_name: str) -> None:
     """Print formatted step header."""
@@ -69,36 +60,12 @@ def print_summary(title: str, items: list) -> None:
         print(f"  {item}")
 
 
-def print_info(message: str) -> None:
-    """Print info message."""
-    print(f"[INFO] {message}")
-
-
-def print_warning(message: str) -> None:
-    """Print warning message."""
-    print(f"[WARNING] {message}")
-
-
-def print_success(message: str) -> None:
-    """Print success message."""
-    print(f"[SUCCESS] {message}")
-
-
-def print_error(message: str) -> None:
-    """Print error message."""
-    print(f"[ERROR] {message}", file=sys.stderr)
-
-
-# =============================================================================
-# ARGUMENT PARSERS
-# =============================================================================
-
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     """Add arguments common to multiple subcommands."""
     parser.add_argument('input', help='Input STAR file')
     parser.add_argument('-o', '--output', help='Output STAR file (default: auto-generated)')
     parser.add_argument('--angpix', type=float, default=14.00,
-                       help='Pixel size in Angstroms/pixel (default: 14.00)')
+                       help='Pixel size (Angstroms/pixel) (default: 14.00)')
 
 
 def add_fit_arguments(parser: argparse.ArgumentParser) -> None:
@@ -108,9 +75,9 @@ def add_fit_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--min_seed', type=int, default=6,
                        help='Minimum seed points (default: 6)')
     parser.add_argument('--sample_step', type=float, default=82.0,
-                       help='Resampling step in Angstroms (default: 82.0)')
+                       help='Resampling step (Angstroms) (default: 82.0)')
     
-    # Advanced fit parameters (hidden from help)
+    # Advanced fit parameters (hidden)
     parser.add_argument('--max_dis_to_line_ang', type=float, default=50, help=argparse.SUPPRESS)
     parser.add_argument('--min_dis_neighbor_seed_ang', type=float, default=60, help=argparse.SUPPRESS)
     parser.add_argument('--max_dis_neighbor_seed_ang', type=float, default=320, help=argparse.SUPPRESS)
@@ -126,17 +93,18 @@ def add_fit_arguments(parser: argparse.ArgumentParser) -> None:
 def add_clean_arguments(parser: argparse.ArgumentParser) -> None:
     """Add cleaning-specific arguments."""
     parser.add_argument('--dist_thres', type=float, default=50,
-                       help='Overlap removal threshold in Angstroms (default: 50)')
+                       help='Overlap removal threshold (Angstroms) (default: 50)')
     parser.add_argument('--margin', type=float, default=500,
-                       help='Bounding box margin in Angstroms (default: 500)')
+                       help='Bounding box margin (Angstroms) (default: 500)')
+
 
 
 def add_connect_arguments(parser: argparse.ArgumentParser) -> None:
     """Add connection-specific arguments."""
     parser.add_argument('--dist_extrapolate', type=float, required=True,
-                       help='Initial extrapolation distance in Angstroms (REQUIRED)')
+                       help='Initial extrapolation distance (Angstroms) (REQUIRED)')
     parser.add_argument('--overlap_thres', type=float, required=True,
-                       help='Connection overlap threshold in Angstroms (REQUIRED)')
+                       help='Connection overlap threshold (Angstroms) (REQUIRED)')
     parser.add_argument('--iterations', type=int, default=2,
                        help='Connection iterations (default: 2)')
     parser.add_argument('--dist_scale', type=float, default=1.5,
@@ -146,45 +114,23 @@ def add_connect_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument('--poly_order', type=int, default=3,
                        help='Polynomial order for refitting (default: 3)')
     parser.add_argument('--sample_step', type=float, default=82.0,
-                       help='Resampling step for refitting in Angstroms (default: 82.0)')
+                       help='Resampling step for refitting (Angstroms) (default: 82.0)')
     parser.add_argument('--min_part_per_line', type=int, default=5,
-                       help='Minimum particles per tube (default: 5)')
+                       help='Minimum particles per line (default: 5)')
     parser.add_argument('--poly_order_seed', type=int, default=3, help=argparse.SUPPRESS)
 
 
 def add_predict_arguments(parser: argparse.ArgumentParser) -> None:
     """Add predict-specific arguments."""
-    parser.add_argument('--template', type=str, required=True,
-                       help='Template STAR file for angle prediction (REQUIRED)')
+    parser.add_argument('--template', type=str, required=True)
     parser.add_argument('--neighbor_rad', type=float, default=100,
-                       help='Radius for finding neighbor particles in Angstroms (default: 100)')
+                       help='Radius for finding neigbour particles (default: 100)')
     parser.add_argument('--max_delta_deg', type=float, default=20,
-                       help='Max angle deviation within same tube in degrees (default: 20)')
-    parser.add_argument('--lcc_keep_top', type=float, default=DEFAULT_LCC_KEEP_TOP,
-                       help=f'Percentage of top LCC particles to keep (default: {DEFAULT_LCC_KEEP_TOP})')
+                       help='Max delta deviation same filament (default: 20)')
 
-# =============================================================================
-# PIPELINE STEPS
-# =============================================================================
 
 def run_fitting(file_path: str, args: argparse.Namespace, step_num: int = None) -> pd.DataFrame:
-    """
-    Run initial curve fitting and clustering.
-    
-    Parameters
-    ----------
-    file_path : str
-        Path to input STAR file
-    args : argparse.Namespace
-        Command line arguments
-    step_num : int, optional
-        Step number for pipeline execution
-        
-    Returns
-    -------
-    pd.DataFrame
-        Resampled particles with tube IDs
-    """
+    """Run initial curve fitting and clustering."""
     if step_num is not None:
         print_step_header(step_num, "CURVE FITTING & CLUSTERING")
     else:
@@ -200,10 +146,10 @@ def run_fitting(file_path: str, args: argparse.Namespace, step_num: int = None) 
     if coords is None:
         raise ValueError("Failed to load coordinates from input file")
     
-    print_info(f"Loaded {len(coords)} particles from {tomo_name}")
+    print(f"Loaded {len(coords)} particles from {tomo_name}")
     
     # Run fitting
-    df_resampled, _, cluster_count = fit_curves(
+    df_resam, _, cluster_count = fit_curves(
         coords=coords,
         tomo_name=tomo_name,
         angpix=pixel_size,
@@ -226,30 +172,14 @@ def run_fitting(file_path: str, args: argparse.Namespace, step_num: int = None) 
     
     print_summary("Fitting Results", [
         f"Tubes found: {cluster_count}",
-        f"Particles resampled: {len(df_resampled)}"
+        f"Particles resampled: {len(df_resam)}"
     ])
     
-    return df_resampled
+    return df_resam
 
 
 def run_cleaning(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int = None) -> pd.DataFrame:
-    """
-    Remove overlapping tubes.
-    
-    Parameters
-    ----------
-    df_input : pd.DataFrame
-        Input DataFrame with particles
-    args : argparse.Namespace
-        Command line arguments
-    step_num : int, optional
-        Step number for pipeline execution
-        
-    Returns
-    -------
-    pd.DataFrame
-        Cleaned DataFrame with overlapping tubes removed
-    """
+    """Remove overlapping tubes and optionally short lines."""
     if step_num is not None:
         print_step_header(step_num, "CLEANING (OVERLAP REMOVAL)")
     else:
@@ -257,16 +187,20 @@ def run_cleaning(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int
         print("CLEANING (OVERLAP REMOVAL)")
         print("=" * 80)
 
-    # Validate input
-    validate_dataframe(df_input, required_columns=['rlnHelicalTubeID'])
+    if df_input.empty:
+        print("⚠️ Input DataFrame is empty — skipping cleaning.")
+        return df_input
+
+    if 'rlnHelicalTubeID' not in df_input.columns:
+        raise ValueError("Input DataFrame must contain a 'rlnHelicalTubeID' column.")
 
     n_tubes_before = df_input['rlnHelicalTubeID'].nunique()
     n_particles_before = len(df_input)
 
-    print_info(f"Distance threshold: {args.dist_thres} Å")
-    print_info(f"Bounding box margin: {args.margin} Å")
+    print(f"Distance threshold: {args.dist_thres} Å")
+    print(f"Bounding box margin: {args.margin} Å")
 
-    # Step 1: Overlap detection
+    # === Step 1: Overlap detection ===
     overlap_results = calculate_all_overlaps(
         df=df_input,
         margin=args.margin,
@@ -274,7 +208,7 @@ def run_cleaning(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int
     )
 
     if len(overlap_results) == 0:
-        print_info("No overlapping tubes found - skipping overlap removal")
+        print("\nNo overlapping tubes found — skipping overlap removal.")
         df_filtered = df_input.copy()
     else:
         tubes_to_delete = identify_tubes_to_delete(
@@ -283,20 +217,20 @@ def run_cleaning(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int
         )
 
         if len(tubes_to_delete) == 0:
-            print_info(f"No tubes meet removal criteria (distance < {args.dist_thres} Å)")
+            print(f"\nNo tubes meet removal criteria (distance < {args.dist_thres} Å).")
             df_filtered = df_input.copy()
         else:
             df_filtered = remove_overlapping_tubes(df=df_input, tubes_to_delete=tubes_to_delete)
 
-    # Step 2: Summary
+    # === Step 3: Summary ===
     n_tubes_after = df_filtered['rlnHelicalTubeID'].nunique()
     n_particles_after = len(df_filtered)
 
-    tubes_removed = n_tubes_before - n_tubes_after
+    tubes_removed_overlap = n_tubes_before - n_tubes_after
     particles_removed = n_particles_before - n_particles_after
 
     print_summary("Cleaning Results", [
-        f"Tubes removed by overlap: {tubes_removed}",
+        f"Tubes removed by overlap: {tubes_removed_overlap}",
         f"Particles removed: {particles_removed}",
         f"Remaining tubes: {n_tubes_after}",
         f"Remaining particles: {n_particles_after}"
@@ -305,24 +239,9 @@ def run_cleaning(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int
     return df_filtered
 
 
+
 def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int = None) -> pd.DataFrame:
-    """
-    Connect broken tube segments.
-    
-    Parameters
-    ----------
-    df_input : pd.DataFrame
-        Input DataFrame with particles
-    args : argparse.Namespace
-        Command line arguments
-    step_num : int, optional
-        Step number for pipeline execution
-        
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with connected and refitted tubes
-    """
+    """Connect broken tube segments."""
     if step_num is not None:
         print_step_header(step_num, "CONNECTION (TRAJECTORY EXTRAPOLATION)")
     else:
@@ -330,18 +249,16 @@ def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: i
         print("CONNECTION (TRAJECTORY EXTRAPOLATION)")
         print("="*80)
     
-    # Validate input
-    validate_dataframe(df_input, required_columns=['rlnHelicalTubeID'])
-    
     n_tubes_before = df_input['rlnHelicalTubeID'].nunique()
     df_current = df_input.copy()
     current_dist_extrapolate = args.dist_extrapolate
     total_merges = 0
     
-    print_info(f"Initial extrapolation: {args.dist_extrapolate} Å")
-    print_info(f"Overlap threshold: {args.overlap_thres} Å")
-    print_info(f"Max iterations: {args.iterations}")
-    print_info(f"Minimum particles per tube: {args.min_part_per_line}")
+    print(f"Initial extrapolation: {args.dist_extrapolate} Å")
+    print(f"Overlap threshold: {args.overlap_thres} Å")
+    print(f"Max iterations: {args.iterations}")
+    print(f"Minimum particles per line: {args.min_part_per_line}")
+
     
     # Iterative connection
     for i in range(1, args.iterations + 1):
@@ -379,13 +296,14 @@ def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: i
         
         if i < args.iterations:
             current_dist_extrapolate *= args.dist_scale
-    
+            
     # Remove tubes with less than min_part_per_line
     df_filtered = filter_short_lines(df_current, args.min_part_per_line)
+
     
     # Final refit and resample
     if total_merges > 0:
-        print_info("Refitting and resampling merged tubes...")
+        print(f"\n  Refitting and resampling merged tubes...")
         df_final = refit_and_resample_tubes(
             df_input=df_filtered,
             poly_order=args.poly_order,
@@ -393,42 +311,21 @@ def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: i
             angpix=args.angpix
         )
     else:
-        print_info("No merges performed - skipping refit")
+        print(f"\n  No merges performed - skipping refit")
         df_final = df_filtered
     
-    tubes_short_removed = df_current['rlnHelicalTubeID'].nunique() - df_final['rlnHelicalTubeID'].nunique()
     
     print_summary("Connection Results", [
         f"Tube groups merged: {total_merges}",
-        f"Tubes with less than {args.min_part_per_line} particles removed: {tubes_short_removed}",
+        f"Tube with less than {args.min_part_per_line} particles: {df_current['rlnHelicalTubeID'].nunique() - df_final['rlnHelicalTubeID'].nunique()}",
         f"Final tubes: {df_final['rlnHelicalTubeID'].nunique()}",
         f"Final particles: {len(df_final)}"
     ])
     
     return df_final
 
+def run_prediction(df_particles: pd.DataFrame, df_template: pd.DataFrame, args: argparse.Namespace, step_num: int = None) -> pd.DataFrame:
 
-def run_prediction(df_input: pd.DataFrame, df_template: pd.DataFrame, 
-                  args: argparse.Namespace, step_num: int = None) -> pd.DataFrame:
-    """
-    Predict angles based on template matching.
-    
-    Parameters
-    ----------
-    df_input : pd.DataFrame
-        Input DataFrame with particles (fitted tubes)
-    df_template : pd.DataFrame
-        Template DataFrame with reference angles
-    args : argparse.Namespace
-        Command line arguments
-    step_num : int, optional
-        Step number for pipeline execution
-        
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with predicted angles
-    """
     if step_num is not None:
         print_step_header(step_num, "PREDICT (ANGLE BASED ON TEMPLATE MATCH)")
     else:
@@ -436,51 +333,35 @@ def run_prediction(df_input: pd.DataFrame, df_template: pd.DataFrame,
         print("PREDICT (ANGLE BASED ON TEMPLATE MATCH)")
         print("="*80)
 
-    # Validate input
-    validate_dataframe(df_input, required_columns=['rlnHelicalTubeID'])
-    validate_dataframe(df_template)
 
-    print_info(f"Neighbor radius: {args.neighbor_rad} Å")
-    print_info(f"Template file: {args.template}")
-    print_info(f"LCC keep top: {args.lcc_keep_top}%")
+    # Step 1: LCC filter (keep top 80% if possible)
+    
+    print(f"Neighbor radius: {args.neighbor_rad} Å")
+    print(f"Template file: {args.template}")
 
-    # Step 1: LCC filter (keep top percentage of high-quality matches)
-    df_filtered = lcc_filter(
-        df_input=df_input,
-        df_template=df_template,
-        angpix=args.angpix,
-        neighbor_rad=args.neighbor_rad,
-        keep_top=args.lcc_keep_top
-    )
 
-    # Step 2: Map local averaged angles from filtered template to input geometry
+    df_filtered = lcc_filter(df_particles, df_template, args.angpix, args.neighbor_rad, keep_top=70.0)
+    
+    #write_star(df_filtered, 'test.star')
+
+    # Step 2: Map local averaged angles from filtered source to template geometry
     df_mapped = map_local_avg_angles(
-        df_input=df_input,
+        df_input=df_particles,
         df_tpl=df_filtered,
-        angpix=args.angpix,
-        radiusA=args.neighbor_rad,
+        angpix=args.angpix,       # Å/px
+        radiusA=args.neighbor_rad,     # Å
         k=8,
-        weight_by_distance=True
-    )
+        weight_by_distance=True)
 
-    # Step 3: Filament median snap (ensure consistency within each tube)
+	# Skip this step for now
+    # Step 3: Filament median snap, default max_delta=20°, min_pts=5
     df_final = snap_by_filament_median(
         df_mapped,
-        max_delta_deg=args.max_delta_deg,
-        min_points_per_filament=5
+        args.max_delta_deg,
+        min_points_per_filament=5,
     )
-    
-    print_summary("Prediction Results", [
-        f"Template particles used: {len(df_filtered)}",
-        f"Particles with predicted angles: {len(df_final)}"
-    ])
-    
     return df_final
-
-# =============================================================================
-# COMMAND HANDLERS
-# =============================================================================
-
+    
 def cmd_fit(args: argparse.Namespace) -> None:
     """Execute fit subcommand."""
     output_file = args.output or f"{os.path.splitext(args.input)[0]}_fitted.star"
@@ -490,13 +371,13 @@ def cmd_fit(args: argparse.Namespace) -> None:
         
         if not df_fitted.empty:
             write_star(df_fitted, output_file, overwrite=True)
-            print_success(f"Output saved to: {output_file}")
+            print(f"\n✓ Output saved to: {output_file}")
         else:
-            print_warning("No output particles generated")
+            print("\nWarning: No output particles generated")
             sys.exit(1)
             
     except Exception as e:
-        print_error(f"{e}")
+        print(f"\nError: {e}")
         sys.exit(1)
 
 
@@ -507,19 +388,20 @@ def cmd_clean(args: argparse.Namespace) -> None:
     try:
         # Read input
         df_input = read_star(args.input)
-        validate_dataframe(df_input)
+        if df_input is None or df_input.empty:
+            raise ValueError("Failed to load input file or file is empty")
         
         df_cleaned = run_cleaning(df_input, args)
         
         if not df_cleaned.empty:
             write_star(df_cleaned, output_file, overwrite=True)
-            print_success(f"Output saved to: {output_file}")
+            print(f"\n✓ Output saved to: {output_file}")
         else:
-            print_warning("No output particles remaining after cleaning")
+            print("\nWarning: No output particles remaining after cleaning")
             sys.exit(1)
             
     except Exception as e:
-        print_error(f"{e}")
+        print(f"\nError: {e}")
         sys.exit(1)
 
 
@@ -530,53 +412,53 @@ def cmd_connect(args: argparse.Namespace) -> None:
     try:
         # Read input
         df_input = read_star(args.input)
-        validate_dataframe(df_input)
+        if df_input is None or df_input.empty:
+            raise ValueError("Failed to load input file or file is empty")
         
         df_connected = run_connection(df_input, args)
         
         if not df_connected.empty:
             write_star(df_connected, output_file, overwrite=True)
-            print_success(f"Output saved to: {output_file}")
+            print(f"\n✓ Output saved to: {output_file}")
         else:
-            print_warning("No output particles generated")
+            print("\nWarning: No output particles generated")
             sys.exit(1)
             
     except Exception as e:
-        print_error(f"{e}")
+        print(f"\nError: {e}")
         sys.exit(1)
 
-
 def cmd_predict(args: argparse.Namespace) -> None:
-    """Execute predict subcommand."""
-    output_file = args.output or f"{os.path.splitext(args.input)[0]}_predicted.star"
+    """Execute connect subcommand."""
+    output_file = args.output or f"{os.path.splitext(args.input)[0]}_predict.star"
     
     try:
-        # Read input files
+        # Read input
         df_input = read_star(args.input)
-        validate_dataframe(df_input)
-        
+        if df_input is None or df_input.empty:
+            raise ValueError("Failed to load input file or file is empty")
+            
         df_template = read_star(args.template)
-        validate_dataframe(df_template)
+        if df_template is None or df_template.empty:
+            raise ValueError("Failed to load input file or file is empty")
         
         df_predicted = run_prediction(df_input, df_template, args)
         
         if not df_predicted.empty:
             write_star(df_predicted, output_file, overwrite=True)
-            print_success(f"Output saved to: {output_file}")
+            print(f"\n✓ Output saved to: {output_file}")
         else:
-            print_warning("No output particles generated")
-            sys.exit(1)
-            
+            print("\nWarning: No output particles generated")
+            sys.exit(1)   
     except Exception as e:
-        print_error(f"{e}")
+        print(f"\nError: {e}")
         sys.exit(1)
-
-
+        
 def cmd_pipeline(args: argparse.Namespace) -> None:
     """Execute full pipeline."""
     output_file = args.output or f"{os.path.splitext(args.input)[0]}_processed.star"
     
-    # Print pipeline header
+    # Print header
     print("="*80)
     print("FILAMENT PROCESSING PIPELINE")
     print("="*80)
@@ -584,24 +466,21 @@ def cmd_pipeline(args: argparse.Namespace) -> None:
     print(f"Pixel size: {args.angpix} Å/px")
     print(f"Sample step: {args.sample_step} Å")
     print(f"Polynomial order: {args.poly_order}")
-    print(f"Minimum number of seed: {args.min_seed}")
+    print(f"Mininum no of seed: {args.min_seed}")
     print(f"Distance threshold: {args.dist_thres} Å")
     print(f"Distance extrapolate: {args.dist_extrapolate} Å")
     print(f"Overlap threshold: {args.overlap_thres} Å")
     print(f"Neighbor radius: {args.neighbor_rad} Å")
     print(f"Template star file: {args.template}")
+
     
     try:
-        # Run pipeline steps
+        # Run pipeline
         df_fitted = run_fitting(args.input, args, step_num=1)
         df_cleaned = run_cleaning(df_fitted, args, step_num=2)
         df_connected = run_connection(df_cleaned, args, step_num=3)
-        
-        # Load template for prediction
-        df_template = read_star(args.template)
-        validate_dataframe(df_template)
-        
-        df_final = run_prediction(df_connected, df_template, args, step_num=4)
+        df_final = run_prediction(df_connected, read_star(args.input), args, step_num=4)
+
         
         # Save output
         if not df_final.empty:
@@ -616,16 +495,13 @@ def cmd_pipeline(args: argparse.Namespace) -> None:
                 f"Particles: {len(df_final)}"
             ])
         else:
-            print_warning("Pipeline produced no output particles")
+            print("\nWarning: Pipeline produced no output particles")
             sys.exit(1)
             
     except Exception as e:
-        print_error(f"{e}")
+        print(f"\nError: {e}")
         sys.exit(1)
 
-# =============================================================================
-# MAIN ENTRY POINT
-# =============================================================================
 
 def main() -> None:
     """Main entry point with subcommand parsing."""
@@ -637,20 +513,20 @@ Subcommands:
   fit       Initial curve fitting and clustering
   clean     Remove overlapping tubes
   connect   Connect broken tube segments
-  predict   Predict angles using template matching
-  pipeline  Run full pipeline (fit -> clean -> connect -> predict)
+  predict   Predict angle using original template matched files
+  pipeline  Run full pipeline (fit -> clean -> connect)
 
 Examples:
   # Run individual steps
   %(prog)s fit input.star --angpix 14 --sample_step 82
   %(prog)s clean fitted.star --dist_thres 50
   %(prog)s connect cleaned.star --dist_extrapolate 1500 --overlap_thres 80 --min_part_per_line 5
-  %(prog)s predict connected.star --template input.star --neighbor_rad 100 --max_delta_deg 20
+  %(prog)s predict connected.star --template input.star --neighbor_rad 100 --max_delta_degree 20
+
   
   # Run full pipeline
   %(prog)s pipeline input.star --angpix 14 --sample_step 82 \\
-           --dist_thres 50 --dist_extrapolate 1500 --overlap_thres 80 \\
-           --min_part_per_line 5 --neighbor_rad 100 --template input.star
+           --dist_thres 50 --dist_extrapolate 1500 --overlap_thres 80 --min_part_per_line 5 --neighbor_rad 100 --template input.star
         """
     )
     
@@ -675,10 +551,10 @@ Examples:
     connect_parser.set_defaults(func=cmd_connect)
     
     # PREDICT subcommand
-    predict_parser = subparsers.add_parser('predict', help='Predict angles from template')
+    predict_parser = subparsers.add_parser('predict', help='Predict angles from a template')
     add_common_arguments(predict_parser)
     add_predict_arguments(predict_parser)
-    predict_parser.set_defaults(func=cmd_predict)
+    predict_parser.set_defaults(func=cmd_predict)    
     
     # PIPELINE subcommand
     pipeline_parser = subparsers.add_parser('pipeline', help='Run full pipeline')
@@ -686,21 +562,20 @@ Examples:
     add_fit_arguments(pipeline_parser)
     add_clean_arguments(pipeline_parser)
     
-    # Connection arguments for pipeline
+    # Connection args for pipeline (with different names to avoid conflicts)
     pipeline_parser.add_argument('--dist_extrapolate', type=float, required=True,
-                                help='Initial extrapolation distance in Angstroms (REQUIRED)')
+                                help='Initial extrapolation distance (Angstroms) (REQUIRED)')
     pipeline_parser.add_argument('--overlap_thres', type=float, required=True,
-                                help='Connection overlap threshold in Angstroms (REQUIRED)')
+                                help='Connection overlap threshold (Angstroms) (REQUIRED)')
     pipeline_parser.add_argument('--iterations', type=int, default=2,
                                 help='Connection iterations (default: 2)')
     pipeline_parser.add_argument('--dist_scale', type=float, default=1.5,
                                 help='Distance scale factor per iteration (default: 1.5)')
     pipeline_parser.add_argument('--min_part_per_line', type=int, default=5,
-                                help='Minimum particles per tube (default: 5)')
+                       help='Minimum particles per line (default: 5)')
     
-    # Prediction arguments for pipeline
     add_predict_arguments(pipeline_parser)
-    
+
     pipeline_parser.set_defaults(func=cmd_pipeline)
     
     # Parse arguments

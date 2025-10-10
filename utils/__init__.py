@@ -15,7 +15,7 @@ from .fit import (
 
 # I/O utilities
 from .io import (
-    validate_star_file,
+    validate_dataframe,
     load_coordinates,
     read_star,
     write_star
@@ -28,7 +28,8 @@ from .clean import (
     calculate_distance_shorter_to_longer,
     calculate_all_overlaps,
     identify_tubes_to_delete,
-    remove_overlapping_tubes
+    remove_overlapping_tubes,
+    filter_short_lines
 )
 
 from .connect import (
@@ -37,8 +38,10 @@ from .connect import (
     refit_and_resample_tubes
 )
 
-from .view import (
-    visualize_star_df
+from .predict import (
+    snap_by_filament_median,
+    map_local_avg_angles,
+    lcc_filter
 )
 
 __all__ = [
@@ -57,17 +60,20 @@ __all__ = [
     'calculate_all_overlaps',
     'identify_tubes_to_delete',
     'remove_overlapping_tubes',
+    'filter_short_lines',
     #Connect functions
     'find_line_connections',
     'merge_connected_lines',
     'refit_and_resample_tubes',
+    # Predict functions
+    'snap_by_filament_median',
+    'map_local_avg_angles',
+    'lcc_filter',
     # I/O functions,
-    'validate_star_file',
+    'validate_dataframe',
     'load_coordinates',
     'read_star',
     'write_star',
-    # View functions
-    'visualize_star_df' 
 ]
 
 __version__ = '1.0.0'

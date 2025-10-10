@@ -13,6 +13,32 @@ import numpy as np
 import pandas as pd
 import starfile
 
+def validate_dataframe(df: pd.DataFrame, required_columns: list = None) -> None:
+    """
+    Validate DataFrame is not None or empty, and has required columns.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame to validate
+    name : str
+        Name of the DataFrame for error messages
+    required_columns : list, optional
+        List of required column names
+        
+    Raises
+    ------
+    ValueError
+        If DataFrame is None, empty, or missing required columns
+    """
+    if df is None:
+        raise ValueError(f"DataFrame is None")
+    if df.empty:
+        raise ValueError(f"DataFrame is empty")
+    if required_columns:
+        missing = [col for col in required_columns if col not in df.columns]
+        if missing:
+            raise ValueError(f"DataFrame missing required columns: {missing}")
 
 def validate_star_file(df: pd.DataFrame, file_path: str) -> bool:
     """

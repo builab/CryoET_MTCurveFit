@@ -22,20 +22,20 @@ from .io import (
 )
 
 from .clean import (
-    get_line_bounding_boxes,
+    get_tube_bounding_boxes,
     boxes_overlap_with_margin,
-    identify_line_pairs_to_compare,
+    identify_tube_pairs_to_compare,
     calculate_distance_shorter_to_longer,
     calculate_all_overlaps,
     identify_tubes_to_delete,
     remove_overlapping_tubes,
-    filter_short_lines
+    filter_short_tubes
 )
 
 from .connect import (
-    find_line_connections,
-    merge_connected_lines,
-    refit_and_resample_tubes
+    find_tube_connections,
+    merge_connected_tubes,
+    refit_and_resample_all_tubes
 )
 
 from .predict import (
@@ -62,9 +62,9 @@ __all__ = [
     'remove_overlapping_tubes',
     'filter_short_lines',
     #Connect functions
-    'find_line_connections',
-    'merge_connected_lines',
-    'refit_and_resample_tubes',
+    'find_tube_connections',
+    'merge_connected_tubes',
+    'refit_and_resample_all_tubes',
     # Predict functions
     'snap_by_filament_median',
     'map_local_avg_angles',

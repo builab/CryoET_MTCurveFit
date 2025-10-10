@@ -2,8 +2,14 @@
 # coding: utf-8
 
 """
-Core curve fitting functions for filamentous structures.
-Multi-curve fitting of 3D coordinates for RELION filament processing.
+Fit lines on scatter data.
+
+This module provides functionality to:
+- Fit lines on scatter points from template matching
+- Resample points at specific interval
+
+Code based on https://github.com/PengxinChai/multi-curve-fitting
+
 @Builab 2025
 """
 

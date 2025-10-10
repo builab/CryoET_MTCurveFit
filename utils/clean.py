@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
+
 """
-Core functions for helical tube overlap calculation and filtering.
+Cleaning overlapping & short helical tubes.
+
+This module provides functionality to:
+- Calculate overlapped tubes within a certain distance and filter out
+- Implement a quick bounding box for screening close tubes
+- Filter tubes with smaller number of particles
+
 @Builab 2025
 """
 
@@ -10,7 +17,7 @@ from scipy.spatial import cKDTree
 from typing import List, Tuple, Set, Dict, Any
 
 
-def get_line_bounding_boxes(
+def get_tube_bounding_boxes(
     df: pd.DataFrame,
     tube_ids: np.ndarray,
     angpix: float
@@ -69,7 +76,7 @@ def boxes_overlap_with_margin(
     return True
 
 
-def identify_line_pairs_to_compare(
+def identify_tube_pairs_to_compare(
     bounding_boxes: Dict[int, Dict[str, Any]],
     margin: float
 ) -> List[Tuple[int, int]]:
@@ -108,7 +115,7 @@ def calculate_distance_shorter_to_longer(
     coords_longer: np.ndarray
 ) -> float:
     """
-    Calculate average minimum distance from shorter line to longer line.
+    Calculate average minimum distance from shorter tube to longer tube.
     
     Args:
         coords_shorter: Coordinates of shorter tube (N x 3).
@@ -153,18 +160,18 @@ def calculate_all_overlaps(
     print(f"Found {len(tube_ids)} helical tubes")
     
     # Step 1: Get bounding boxes and identify pairs to compare
-    print("\nStep 1: Identifying line pairs to compare...")
-    bounding_boxes = get_line_bounding_boxes(df, tube_ids, angpix)
-    pairs_to_compare = identify_line_pairs_to_compare(bounding_boxes, margin)
+    print("\nStep 1: Identifying tube pairs to compare...")
+    bounding_boxes = get_tube_bounding_boxes(df, tube_ids, angpix)
+    pairs_to_compare = identify_tube_pairs_to_compare(bounding_boxes, margin)
     print(f"Found {len(pairs_to_compare)} pairs close enough to compare")
     print(f"(Skipped {len(tube_ids)*(len(tube_ids)-1)//2 - len(pairs_to_compare)} distant pairs)")
     
     # Step 2: Calculate detailed distances for identified pairs
-    print("\nStep 2: Calculating distances from shorter to longer lines...")
+    print("\nStep 2: Calculating distances from shorter to longer tubes...")
     results = []
     
     for shorter_id, longer_id in pairs_to_compare:
-        # Get coordinates for both lines (convert to real coordinates)
+        # Get coordinates for both tubes (convert to real coordinates)
         coords_shorter = df[df['rlnHelicalTubeID'] == shorter_id][
             ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']
         ].values * angpix
@@ -232,28 +239,29 @@ def remove_overlapping_tubes(
     df_filtered = df[~df['rlnHelicalTubeID'].isin(tubes_to_delete)].copy()
     return df_filtered
 
-def filter_short_lines(df: pd.DataFrame, min_part_per_line: int) -> pd.DataFrame:
+
+def filter_short_tubes(df: pd.DataFrame, min_part_per_tube: int) -> pd.DataFrame:
     """
-    Filter out lines (rlnHelicalTubeID groups) with fewer than min_part_per_line particles.
-    If min_part_per_line == 0, returns df unchanged.
+    Filter out tubes (rlnHelicalTubeID groups) with fewer than min_part_per_tube particles.
+    If min_part_per_tube == 0, returns df unchanged.
     """
     if df.empty:
-        print("⚠️ Input DataFrame is empty — skipping short line filtering.")
+        print("⚠️ Input DataFrame is empty — skipping short tube filtering.")
         return df
 
     if 'rlnHelicalTubeID' not in df.columns:
         raise ValueError("DataFrame must contain a 'rlnHelicalTubeID' column.")
 
-    if not isinstance(min_part_per_line, int) or min_part_per_line < 0:
-        raise ValueError("min_part_per_line must be a non-negative integer.")
+    if not isinstance(min_part_per_tube, int) or min_part_per_tube < 0:
+        raise ValueError("min_part_per_tube must be a non-negative integer.")
 
-    if min_part_per_line == 0:
-        #print("Minimum particles per line = 0 → skipping short line filtering.")
+    if min_part_per_tube == 0:
+        #print("Minimum particles per tube = 0 → skipping short tube filtering.")
         return df.copy()
 
     df_filtered = (
         df.groupby('rlnHelicalTubeID')
-        .filter(lambda x: len(x) >= min_part_per_line)
+        .filter(lambda x: len(x) >= min_part_per_tube)
         .reset_index(drop=True)
     )
     return df_filtered

@@ -1,283 +1,361 @@
 #!/usr/bin/env python3
 """
-Core functions for connecting broken helical tubes using trajectory extrapolation.
+Connect broken helical tubes using trajectory extrapolation.
+
+This module provides functionality to:
+- Detect potential connections between tube segments
+- Extrapolate tube trajectories using polynomial fitting
+- Merge connected tubes and resample them
+
 @Builab 2025
 """
 
-import math
 import numpy as np
 import pandas as pd
 from typing import Dict, Any, Tuple, Optional, List
 
+# Constants
+DEFAULT_MAX_EXTRAPOLATION_STEPS = 50
+INTEGRATION_STEP_DIVISOR = 10.0
+MIN_POINTS_FOR_FITTING = 2
 
-def distance(p1: np.ndarray, p2: np.ndarray) -> float:
-    """Calculate Euclidean distance between two 3D points."""
+
+class TubeInfo:
+    """Container for helical tube metadata and coordinates."""
+    
+    def __init__(
+        self,
+        tube_id: int,
+        coords: np.ndarray,
+        tomo_name: str = "Unknown",
+        detector_pixel_size: Optional[float] = None
+    ):
+        self.tube_id = tube_id
+        self.coords = coords  # In Angstroms
+        self.n_points = len(coords)
+        self.tomo_name = tomo_name
+        self.detector_pixel_size = detector_pixel_size
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary format for backwards compatibility."""
+        return {
+            'tube_id': self.tube_id,
+            'coords': self.coords,
+            'n_points': self.n_points,
+            'tomo_name': self.tomo_name,
+            'detector_pixel_size': self.detector_pixel_size
+        }
+
+
+def euclidean_distance(p1: np.ndarray, p2: np.ndarray) -> float:
+    """
+    Calculate Euclidean distance between two 3D points.
+    
+    Args:
+        p1: First point (3D array).
+        p2: Second point (3D array).
+    
+    Returns:
+        Euclidean distance.
+    """
     return np.linalg.norm(p1 - p2)
 
 
-def get_line_info(
+def extract_tube_info(
     df: pd.DataFrame,
     tube_id: int,
     angpix: float
-) -> Optional[Dict[str, Any]]:
+) -> Optional[TubeInfo]:
     """
-    Get coordinates and metadata for a helical tube.
+    Extract coordinates and metadata for a specific helical tube.
     
     Args:
-        df: DataFrame with particle data.
-        tube_id: Tube ID to extract.
-        angpix: Pixel size in Angstroms.
+        df: DataFrame containing particle data.
+        tube_id: Unique tube identifier.
+        angpix: Pixel size in Angstroms for coordinate conversion.
     
     Returns:
-        Dictionary with tube info or None if insufficient points.
+        TubeInfo object or None if tube has insufficient points.
     """
     tube_data = df[df['rlnHelicalTubeID'] == tube_id].copy()
     tube_data = tube_data.sort_index()
-    # Scale coordinates by angpix to work in Angstroms
+    
+    # Convert coordinates from pixels to Angstroms
     coords = tube_data[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].values * angpix
     
-    if len(coords) < 2:
+    if len(coords) < MIN_POINTS_FOR_FITTING:
         return None
     
-    tomo_name = tube_data['rlnTomoName'].iloc[0] if 'rlnTomoName' in tube_data.columns and not tube_data['rlnTomoName'].empty else "Unknown"
-    detector_pixel_size = tube_data['rlnDetectorPixelSize'].iloc[0] if 'rlnDetectorPixelSize' in tube_data.columns and not tube_data['rlnDetectorPixelSize'].empty else None
+    # Extract metadata with safe defaults
+    tomo_name = (
+        tube_data['rlnTomoName'].iloc[0]
+        if 'rlnTomoName' in tube_data.columns and not tube_data['rlnTomoName'].empty
+        else "Unknown"
+    )
+    
+    detector_pixel_size = (
+        tube_data['rlnDetectorPixelSize'].iloc[0]
+        if 'rlnDetectorPixelSize' in tube_data.columns and not tube_data['rlnDetectorPixelSize'].empty
+        else None
+    )
 
-    return {
-        'tube_id': tube_id,
-        'coords': coords,  # Coords in Angstroms
-        'n_points': len(coords),
-        'tomo_name': tomo_name,
-        'detector_pixel_size': detector_pixel_size
-    }
+    return TubeInfo(tube_id, coords, tomo_name, detector_pixel_size)
 
 
-def fit_and_extrapolate(
-    coords: np.ndarray,
-    min_seed: int,
-    dist_extrapolate: float,
-    poly_order_seed: int
-) -> Optional[np.ndarray]:
+def calculate_average_step_size(coords: np.ndarray, n_points: int) -> float:
     """
-    Fit polynomial to last min_seed coordinates and extrapolate forward.
+    Calculate average distance between consecutive points.
     
     Args:
-        coords: Coordinate array (N x 3) in Angstroms.
-        min_seed: Number of points to use for fitting.
-        dist_extrapolate: Total distance to extrapolate in Angstroms.
-        poly_order_seed: Polynomial order for fitting.
+        coords: Coordinate array (N x 3).
+        n_points: Number of points to use from the end.
     
     Returns:
-        Extrapolated coordinates or None if fitting fails.
+        Average step size in Angstroms.
     """
-    N = len(coords)
-    if N < poly_order_seed + 1 or min_seed < poly_order_seed + 1:
-        return None
-    
-    # Calculate average step size from seed points
-    seed_coords = coords[N - min_seed:N, :]
+    seed_coords = coords[-n_points:]
     step_distances = np.linalg.norm(seed_coords[1:] - seed_coords[:-1], axis=1)
     
     if len(step_distances) == 0:
-        avg_step_dist = np.linalg.norm(coords[N-1] - coords[N-2]) if N >= 2 else 0
+        # Fallback to last two points
+        return np.linalg.norm(coords[-1] - coords[-2]) if len(coords) >= 2 else 0.0
+    
+    return np.mean(step_distances)
+
+
+def extrapolate_trajectory(
+    coords: np.ndarray,
+    min_seed: int,
+    dist_extrapolate: float,
+    poly_order: int
+) -> Optional[np.ndarray]:
+    """
+    Fit polynomial to seed points and extrapolate trajectory forward.
+    
+    Args:
+        coords: Coordinate array (N x 3) in Angstroms.
+        min_seed: Number of points to use for polynomial fitting.
+        dist_extrapolate: Total distance to extrapolate in Angstroms.
+        poly_order: Polynomial order for fitting.
+    
+    Returns:
+        Extrapolated coordinates (M x 3) or None if fitting fails.
+    """
+    n_points = len(coords)
+    
+    # Validate input
+    if n_points < poly_order + 1 or min_seed < poly_order + 1:
+        return None
+    
+    # Calculate number of extrapolation steps
+    avg_step = calculate_average_step_size(coords, min_seed)
+    
+    if avg_step <= 0:
+        n_steps = 10  # Default fallback
     else:
-        avg_step_dist = np.mean(step_distances)
-
-    if avg_step_dist <= 0:
-        n_steps = 10 
-    else:
-        n_steps = max(1, int(np.ceil(dist_extrapolate / avg_step_dist)))
-
-    n_extrapolate = min(n_steps, 50)
-
-    # Fit and extrapolate
-    t_fit = np.arange(N - min_seed, N)
-    t_extrapolate = np.arange(N, N + n_extrapolate)
+        n_steps = max(1, int(np.ceil(dist_extrapolate / avg_step)))
+    
+    n_extrapolate = min(n_steps, DEFAULT_MAX_EXTRAPOLATION_STEPS)
+    
+    # Prepare fitting parameters
+    seed_start_idx = n_points - min_seed
+    t_fit = np.arange(seed_start_idx, n_points)
+    t_extrapolate = np.arange(n_points, n_points + n_extrapolate)
+    
     extrapolated_coords = np.zeros((n_extrapolate, 3))
     
-    for i in range(3):
-        y_fit = coords[N - min_seed:N, i]
-        try:
-            p = np.polyfit(t_fit, y_fit, poly_order_seed)
-        except Exception:
-            return None
-            
-        extrapolated_coords[:, i] = np.polyval(p, t_extrapolate)
+    # Fit and extrapolate each dimension independently
+    for dim in range(3):
+        y_fit = coords[seed_start_idx:, dim]
         
+        try:
+            coeffs = np.polyfit(t_fit, y_fit, poly_order)
+            extrapolated_coords[:, dim] = np.polyval(coeffs, t_extrapolate)
+        except np.linalg.LinAlgError:
+            return None
+    
     return extrapolated_coords
 
 
-def check_extrapolation_overlap(
+def detect_trajectory_overlap(
     extrapolated_coords: Optional[np.ndarray],
     target_coords: np.ndarray,
     overlap_threshold: float
 ) -> Tuple[bool, float]:
     """
-    Check if extrapolated path overlaps with target segment.
+    Check if extrapolated trajectory overlaps with target segment.
     
     Args:
-        extrapolated_coords: Extrapolated coordinates.
-        target_coords: Target segment coordinates.
-        overlap_threshold: Maximum distance for overlap in Angstroms.
+        extrapolated_coords: Extrapolated trajectory coordinates.
+        target_coords: Target segment coordinates to check against.
+        overlap_threshold: Maximum distance for overlap detection in Angstroms.
     
     Returns:
-        Tuple of (overlap_found, min_distance).
+        Tuple of (overlap_detected, minimum_distance).
     """
     if extrapolated_coords is None or len(target_coords) == 0:
         return False, float('inf')
-
+    
+    # Compute pairwise distances between all extrapolated and target points
     dist_matrix = np.linalg.norm(
-        extrapolated_coords[:, None, :] - target_coords[None, :, :], axis=2
+        extrapolated_coords[:, None, :] - target_coords[None, :, :],
+        axis=2
     )
     
     min_distance = np.min(dist_matrix)
-    overlap_found = min_distance <= overlap_threshold
+    overlap_detected = min_distance <= overlap_threshold
     
-    return overlap_found, min_distance
+    return overlap_detected, min_distance
 
 
-def check_connection_compatibility_extrapolate(
-    line1_info: Dict[str, Any],
-    line2_info: Dict[str, Any],
+def assess_connection_compatibility(
+    tube1: TubeInfo,
+    tube2: TubeInfo,
     end1: str,
     end2: str,
     overlap_threshold: float,
     min_seed: int,
     dist_extrapolate: float,
-    poly_order_seed: int
+    poly_order: int
 ) -> Tuple[bool, float, bool, bool, float]:
     """
-    Check if line1 can connect to line2 via trajectory extrapolation.
+    Assess if two tube segments can be connected via trajectory extrapolation.
     
     Args:
-        line1_info: Info dict for first tube.
-        line2_info: Info dict for second tube.
-        end1: 'start' or 'end' of line1.
-        end2: 'start' or 'end' of line2.
-        overlap_threshold: Distance threshold in Angstroms.
-        min_seed: Number of points for fitting.
+        tube1: First tube information.
+        tube2: Second tube information.
+        end1: Connection point on tube1 ('start' or 'end').
+        end2: Connection point on tube2 ('start' or 'end').
+        overlap_threshold: Distance threshold for overlap in Angstroms.
+        min_seed: Number of points for polynomial fitting.
         dist_extrapolate: Extrapolation distance in Angstroms.
-        poly_order_seed: Polynomial order.
+        poly_order: Polynomial order for fitting.
     
     Returns:
-        Tuple of (can_connect, min_distance, reverse1, reverse2, simple_end_distance).
+        Tuple containing:
+        - can_connect: Whether connection is possible
+        - min_distance: Minimum distance between trajectories
+        - reverse1: Whether tube1 needs reversal
+        - reverse2: Whether tube2 needs reversal
+        - end_to_end_distance: Simple endpoint distance
     """
-    coords1 = line1_info['coords']
-    coords2 = line2_info['coords']
+    coords1 = tube1.coords
+    coords2 = tube2.coords
     
-    # Calculate simple end-to-end distance
-    P1 = coords1[-1] if end1 == 'end' else coords1[0]
-    P2 = coords2[0] if end2 == 'start' else coords2[-1]
-    simple_end_distance = np.linalg.norm(P1 - P2)
-
-    # Determine which points to fit on Line 1
+    # Calculate direct endpoint distance
+    endpoint1 = coords1[-1] if end1 == 'end' else coords1[0]
+    endpoint2 = coords2[0] if end2 == 'start' else coords2[-1]
+    end_to_end_distance = euclidean_distance(endpoint1, endpoint2)
+    
+    # Prepare tube1 for extrapolation (reverse if connecting from start)
     if end1 == 'end':
-        fit_coords1 = coords1
-        reverse1 = False 
+        fit_coords = coords1
+        reverse1 = False
     else:
-        fit_coords1 = np.flipud(coords1)
+        fit_coords = np.flipud(coords1)
         reverse1 = True
     
-    # Extrapolate Line 1's trajectory
-    extrapolated_coords = fit_and_extrapolate(
-        fit_coords1, min_seed, dist_extrapolate, poly_order_seed
+    # Extrapolate tube1's trajectory
+    extrapolated = extrapolate_trajectory(
+        fit_coords, min_seed, dist_extrapolate, poly_order
     )
     
-    if extrapolated_coords is None:
-        return False, float('inf'), False, False, simple_end_distance
-
-    # Determine target points on Line 2
-    target_buffer = min_seed * 2 
+    if extrapolated is None:
+        return False, float('inf'), False, False, end_to_end_distance
+    
+    # Prepare target region on tube2
+    target_buffer_size = min_seed * 2
     
     if end2 == 'start':
-        target_coords2 = coords2[:target_buffer] 
+        target_coords = coords2[:target_buffer_size]
         reverse2 = False
     else:
-        target_coords2 = np.flipud(coords2[-target_buffer:])
+        target_coords = np.flipud(coords2[-target_buffer_size:])
         reverse2 = True
     
-    # Check for overlap
-    overlap_found, min_distance = check_extrapolation_overlap(
-        extrapolated_coords, target_coords2, overlap_threshold
+    # Check for trajectory overlap
+    overlap_detected, min_distance = detect_trajectory_overlap(
+        extrapolated, target_coords, overlap_threshold
     )
     
-    if not overlap_found:
-        return False, min_distance, False, False, simple_end_distance
+    if not overlap_detected:
+        return False, min_distance, False, False, end_to_end_distance
+    
+    return True, min_distance, reverse1, reverse2, end_to_end_distance
 
-    return True, min_distance, reverse1, reverse2, simple_end_distance
 
-
-def find_line_connections(
+def find_tube_connections(
     df: pd.DataFrame,
     angpix: float,
-    overlap_thres: float,
+    overlap_threshold: float,
     min_seed: int,
     dist_extrapolate: float,
-    poly_order_seed: int
+    poly_order: int
 ) -> List[Dict[str, Any]]:
     """
-    Find all possible connections between tubes using extrapolation.
+    Identify all possible connections between tube segments.
     
     Args:
-        df: DataFrame with particle data.
+        df: DataFrame containing particle data.
         angpix: Pixel size in Angstroms.
-        overlap_thres: Overlap threshold in Angstroms.
-        min_seed: Number of points for fitting.
+        overlap_threshold: Overlap detection threshold in Angstroms.
+        min_seed: Number of points for polynomial fitting.
         dist_extrapolate: Extrapolation distance in Angstroms.
-        poly_order_seed: Polynomial order for fitting.
+        poly_order: Polynomial order for fitting for seed.
     
     Returns:
-        List of connection dictionaries.
+        List of connection dictionaries with metadata.
     """
     tube_ids = df['rlnHelicalTubeID'].unique()
     
-    line_info = {}
+    # Extract information for all tubes
+    tubes = {}
     for tube_id in tube_ids:
-        info = get_line_info(df, tube_id, angpix)
-        if info is not None:
-            line_info[tube_id] = info
+        tube_info = extract_tube_info(df, tube_id, angpix)
+        if tube_info is not None:
+            tubes[tube_id] = tube_info
+    
+    # Test all possible connection configurations
+    connection_types = [
+        ('end', 'start', 'Line1_end → Line2_start'),
+        ('end', 'end', 'Line1_end → Line2_end (reverse Line2)'),
+        ('start', 'start', 'Line1_start → Line2_start (reverse Line1)'),
+        ('start', 'end', 'Line1_start → Line2_end (reverse both)'),
+    ]
     
     connections = []
-    tube_ids_list = list(tube_ids)
+    tube_ids_list = list(tubes.keys())
     
     for i, tube_id1 in enumerate(tube_ids_list):
-        if tube_id1 not in line_info:
-            continue
-        
-        for tube_id2 in tube_ids_list[i+1:]:
-            if tube_id2 not in line_info:
-                continue
-            
-            connection_types = [
-                ('end', 'start', 'Line1_end -> Line2_start'),
-                ('end', 'end', 'Line1_end -> Line2_end (reverse Line2)'),
-                ('start', 'start', 'Line1_start -> Line2_start (reverse Line1)'),
-                ('start', 'end', 'Line1_start -> Line2_end (reverse both)'),
-            ]
-            
+        for tube_id2 in tube_ids_list[i + 1:]:
             best_connection = None
             best_score = float('inf')
             
-            for end1, end2, desc in connection_types:
-                can_connect, min_distance, reverse1, reverse2, simple_end_distance = check_connection_compatibility_extrapolate(
-                    line_info[tube_id1], line_info[tube_id2],
-                    end1, end2, overlap_thres, min_seed, dist_extrapolate, poly_order_seed
+            # Try all connection configurations
+            for end1, end2, description in connection_types:
+                can_connect, min_dist, rev1, rev2, simple_dist = assess_connection_compatibility(
+                    tubes[tube_id1],
+                    tubes[tube_id2],
+                    end1, end2,
+                    overlap_threshold,
+                    min_seed,
+                    dist_extrapolate,
+                    poly_order
                 )
                 
-                if can_connect:
-                    score = min_distance
-                    if score < best_score:
-                        best_score = score
-                        best_connection = {
-                            'tube_id1': tube_id1,
-                            'tube_id2': tube_id2,
-                            'min_overlap_dist': min_distance,
-                            'simple_end_distance': simple_end_distance,
-                            'reverse1': reverse1,
-                            'reverse2': reverse2,
-                            'connection_type': desc,
-                            'n_points1': line_info[tube_id1]['n_points'],
-                            'n_points2': line_info[tube_id2]['n_points']
-                        }
+                if can_connect and min_dist < best_score:
+                    best_score = min_dist
+                    best_connection = {
+                        'tube_id1': tube_id1,
+                        'tube_id2': tube_id2,
+                        'min_overlap_dist': min_dist,
+                        'simple_end_distance': simple_dist,
+                        'reverse1': rev1,
+                        'reverse2': rev2,
+                        'connection_type': description,
+                        'n_points1': tubes[tube_id1].n_points,
+                        'n_points2': tubes[tube_id2].n_points
+                    }
             
             if best_connection is not None:
                 connections.append(best_connection)
@@ -285,132 +363,166 @@ def find_line_connections(
     return connections
 
 
-def merge_connected_lines(
+class UnionFind:
+    """Union-Find data structure for grouping connected tubes."""
+    
+    def __init__(self):
+        self.parent = {}
+    
+    def find(self, x: int) -> int:
+        """Find root of element with path compression."""
+        if x not in self.parent:
+            self.parent[x] = x
+        
+        if self.parent[x] != x:
+            self.parent[x] = self.find(self.parent[x])
+        
+        return self.parent[x]
+    
+    def union(self, x: int, y: int) -> None:
+        """Unite two sets."""
+        root_x = self.find(x)
+        root_y = self.find(y)
+        
+        if root_x != root_y:
+            self.parent[root_y] = root_x
+    
+    def get_groups(self, elements: List[int]) -> Dict[int, List[int]]:
+        """Group elements by their root."""
+        groups = {}
+        for element in elements:
+            root = self.find(element)
+            if root not in groups:
+                groups[root] = []
+            groups[root].append(element)
+        return groups
+
+
+def merge_connected_tubes(
     df: pd.DataFrame,
     connections: List[Dict[str, Any]]
 ) -> Tuple[pd.DataFrame, Dict[int, int]]:
     """
-    Merge tubes that should be connected using union-find.
+    Merge tubes identified as connected using Union-Find algorithm.
     
     Args:
-        df: DataFrame with particle data.
-        connections: List of connection dictionaries.
+        df: DataFrame containing particle data.
+        connections: List of connection dictionaries from find_tube_connections.
     
     Returns:
-        Tuple of (merged DataFrame, tube_id mapping).
+        Tuple containing:
+        - Merged DataFrame with updated tube IDs
+        - Mapping from old tube IDs to new tube IDs
     """
-    parent = {}
+    uf = UnionFind()
     
-    def find(x):
-        if x not in parent:
-            parent[x] = x
-        if parent[x] != x:
-            parent[x] = find(parent[x])
-        return parent[x]
-    
-    def union(x, y):
-        root_x = find(x)
-        root_y = find(y)
-        if root_x != root_y:
-            parent[root_y] = root_x
-    
+    # Build connected components
     for conn in connections:
-        union(conn['tube_id1'], conn['tube_id2'])
+        uf.union(conn['tube_id1'], conn['tube_id2'])
     
-    groups = {}
-    for tube_id in df['rlnHelicalTubeID'].unique():
-        root = find(tube_id)
-        if root not in groups:
-            groups[root] = []
-        groups[root].append(tube_id)
+    # Group tubes by connected components
+    tube_ids = df['rlnHelicalTubeID'].unique()
+    groups = uf.get_groups(tube_ids.tolist())
     
-    df_merged = df.copy()
+    # Create mapping to new consecutive tube IDs
     tube_id_mapping = {}
-    new_tube_id = 1
+    for new_id, (_, tube_list) in enumerate(groups.items(), start=1):
+        for tube_id in tube_list:
+            tube_id_mapping[tube_id] = new_id
     
-    for _, tube_ids in groups.items():
-        for tube_id in tube_ids:
-            tube_id_mapping[tube_id] = new_tube_id
-        new_tube_id += 1
-    
+    # Apply mapping to DataFrame
+    df_merged = df.copy()
     df_merged['rlnHelicalTubeID'] = df_merged['rlnHelicalTubeID'].map(tube_id_mapping)
     
     return df_merged, tube_id_mapping
 
 
-def fit_and_resample_single_tube(
+def fit_and_resample_tube(
     tube_data: pd.DataFrame,
     poly_order: int,
     sample_step: float,
-    integration_step: float,
     angpix: float,
-    current_tube_id: int
+    tube_id: int
 ) -> List[Dict[str, Any]]:
     """
-    Fit polynomial to merged tube and resample.
+    Fit polynomial curve to tube and resample at regular intervals.
     
     Args:
         tube_data: DataFrame with tube particle data (coordinates in pixels).
-        poly_order: Polynomial order for fitting.
-        sample_step: Resampling step in Angstroms.
-        integration_step: Integration step in Angstroms.
+        poly_order: Polynomial order for curve fitting.
+        sample_step: Resampling step size in Angstroms.
         angpix: Pixel size in Angstroms.
-        current_tube_id: Tube ID for output.
+        tube_id: Tube ID for output particles.
     
     Returns:
-        List of resampled points (coordinates in pixels).
+        List of resampled particle dictionaries (coordinates in pixels).
     """
-    # Import resample from fit to avoid circular import
     from .fit import resample
     
-    # Convert to Angstroms for fitting/resampling
-    coords_angstrom = tube_data[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].values * angpix
+    # Convert coordinates from pixels to Angstroms
+    coords = tube_data[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].values * angpix
+    n_points = len(coords)
     
-    N = len(coords_angstrom)
-    if N < poly_order + 1:
-        print(f"  Warning: Tube {current_tube_id} has {N} points, too few for poly order {poly_order}. Skipping refit.")
+    # Validate sufficient points for fitting
+    if n_points < poly_order + 1:
+        print(f"  Warning: Tube {tube_id} has {n_points} points, "
+              f"insufficient for polynomial order {poly_order}. Skipping.")
         return []
-
-    # Get metadata
-    tomo_name = tube_data['rlnTomoName'].iloc[0] if 'rlnTomoName' in tube_data.columns and not tube_data['rlnTomoName'].empty else "Unknown"
-    detector_pixel_size = tube_data['rlnDetectorPixelSize'].iloc[0] if 'rlnDetectorPixelSize' in tube_data.columns and not tube_data['rlnDetectorPixelSize'].empty else None
-
-    # Determine independent variable by largest range
-    ranges = np.ptp(coords_angstrom, axis=0)
     
-    if ranges[0] >= ranges[1]:  # X is major axis
-        independent_var = coords_angstrom[:, 0]
-        poly_xy = np.poly1d(np.polyfit(independent_var, coords_angstrom[:, 1], poly_order))
-        poly_k = np.poly1d(np.polyfit(independent_var, coords_angstrom[:, 2], poly_order))
+    # Extract metadata
+    tomo_name = (
+        tube_data['rlnTomoName'].iloc[0]
+        if 'rlnTomoName' in tube_data.columns and not tube_data['rlnTomoName'].empty
+        else "Unknown"
+    )
+    
+    detector_pixel_size = (
+        tube_data['rlnDetectorPixelSize'].iloc[0]
+        if 'rlnDetectorPixelSize' in tube_data.columns and not tube_data['rlnDetectorPixelSize'].empty
+        else None
+    )
+    
+    # Determine primary axis (dimension with largest range)
+    ranges = np.ptp(coords, axis=0)
+    
+    if ranges[0] >= ranges[1]:  # X is primary axis
+        independent_var = coords[:, 0]
+        dependent_y = coords[:, 1]
+        dependent_z = coords[:, 2]
         mode = 1
-    else:  # Y is major axis
-        independent_var = coords_angstrom[:, 1]
-        poly_xy = np.poly1d(np.polyfit(independent_var, coords_angstrom[:, 0], poly_order))
-        poly_k = np.poly1d(np.polyfit(independent_var, coords_angstrom[:, 2], poly_order))
+    else:  # Y is primary axis
+        independent_var = coords[:, 1]
+        dependent_y = coords[:, 0]
+        dependent_z = coords[:, 2]
         mode = 2
-
+    
+    # Fit polynomials
+    poly_y = np.poly1d(np.polyfit(independent_var, dependent_y, poly_order))
+    poly_z = np.poly1d(np.polyfit(independent_var, dependent_z, poly_order))
+    
+    # Resample along fitted curve
+    integration_step = sample_step / INTEGRATION_STEP_DIVISOR
     start = independent_var.min()
     end = independent_var.max()
     
-    # Resample (output in Angstroms)
-    resampled_points_angstrom = resample(
-        poly_xy, poly_k, start, end, mode,
-        current_tube_id - 1,  # cluster_id is 0-indexed
+    resampled_points = resample(
+        poly_y, poly_z, start, end, mode,
+        tube_id - 1,  # cluster_id is 0-indexed in original code
         tomo_name, sample_step, integration_step,
         detector_pixel_size
     )
     
-    # Convert back to pixels
-    for point in resampled_points_angstrom:
+    # Convert coordinates back from Angstroms to pixels
+    for point in resampled_points:
         point['rlnCoordinateX'] /= angpix
         point['rlnCoordinateY'] /= angpix
         point['rlnCoordinateZ'] /= angpix
-        
-    return resampled_points_angstrom
+    
+    return resampled_points
 
 
-def refit_and_resample_tubes(
-    df_input: pd.DataFrame,
+def refit_and_resample_all_tubes(
+    df: pd.DataFrame,
     poly_order: int,
     sample_step: float,
     angpix: float
@@ -419,51 +531,68 @@ def refit_and_resample_tubes(
     Renumber tube IDs consecutively and refit/resample all tubes.
     
     Args:
-        df_input: DataFrame with merged tubes.
-        poly_order: Polynomial order for final fitting.
-        sample_step: Resampling step in Angstroms.
+        df: DataFrame with merged tubes.
+        poly_order: Polynomial order for curve fitting.
+        sample_step: Resampling step size in Angstroms.
         angpix: Pixel size in Angstroms.
     
     Returns:
         DataFrame with resampled particles (coordinates in pixels).
     """
-    print(f"\n--- Post-Merging Refit/Resample Step ---")
-    print(f"  Target Polynomial Order for Final Fit: {poly_order}")
-    print(f"  Resampling Step Distance: {sample_step:.2f} Angstroms")
-
+    print(f"\n{'='*60}")
+    print("Post-Merging Refit & Resample")
+    print(f"{'='*60}")
+    print(f"  Polynomial Order: {poly_order}")
+    print(f"  Resampling Step:  {sample_step:.2f} Å")
+    
     # Renumber tube IDs consecutively
-    unique_ids = df_input['rlnHelicalTubeID'].unique()
-    id_map = {old_id: new_id + 1 for new_id, old_id in enumerate(unique_ids)}
-    df_renumbered = df_input.copy()
-    df_renumbered['rlnHelicalTubeID'] = df_renumbered['rlnHelicalTubeID'].map(id_map)
+    unique_ids = df['rlnHelicalTubeID'].unique()
+    id_mapping = {old_id: new_id for new_id, old_id in enumerate(unique_ids, start=1)}
     
-    all_resampled_points = []
-    integration_step = sample_step / 10.0  # Small step for integration
+    df_renumbered = df.copy()
+    df_renumbered['rlnHelicalTubeID'] = df_renumbered['rlnHelicalTubeID'].map(id_mapping)
     
-    for old_id, new_id in id_map.items():
+    # Resample each tube
+    all_resampled = []
+    
+    for new_id in sorted(id_mapping.values()):
         tube_data = df_renumbered[df_renumbered['rlnHelicalTubeID'] == new_id]
-        
-        resampled_data = fit_and_resample_single_tube(
-            tube_data, poly_order, sample_step, integration_step, angpix, new_id
-        )
-        all_resampled_points.extend(resampled_data)
-
-    if all_resampled_points:
-        df_resampled = pd.DataFrame(all_resampled_points)
-        print(f"  Successfully resampled {df_resampled['rlnHelicalTubeID'].nunique()} tubes into {len(df_resampled)} particles.")
-        
-        # Standardize column order
-        required_cols = ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ', 
-                         'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi', 
-                         'rlnHelicalTubeID', 'rlnTomoName']
-        if 'rlnDetectorPixelSize' in df_resampled.columns:
-            required_cols.append('rlnDetectorPixelSize')
-             
-        for col in required_cols:
-            if col not in df_resampled.columns:
-                df_resampled[col] = 0.0
-
-        return df_resampled[required_cols]
-    else:
-        print("  Resampling failed. Returning original merged data (renumbered).")
+        resampled = fit_and_resample_tube(tube_data, poly_order, sample_step, angpix, new_id)
+        all_resampled.extend(resampled)
+    
+    if not all_resampled:
+        print("  Warning: Resampling failed. Returning renumbered data without resampling.")
         return df_renumbered
+    
+    # Create output DataFrame
+    df_output = pd.DataFrame(all_resampled)
+    
+    print(f"  ✓ Resampled {df_output['rlnHelicalTubeID'].nunique()} tubes "
+          f"into {len(df_output)} particles")
+    
+    # Ensure standard column order
+    required_cols = [
+        'rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ',
+        'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi',
+        'rlnHelicalTubeID', 'rlnTomoName'
+    ]
+    
+    if 'rlnDetectorPixelSize' in df_output.columns:
+        required_cols.append('rlnDetectorPixelSize')
+    
+    # Fill missing columns with defaults
+    for col in required_cols:
+        if col not in df_output.columns:
+            df_output[col] = 0.0
+    
+    return df_output[required_cols]
+
+
+# Backwards compatibility aliases
+get_line_info = extract_tube_info
+fit_and_extrapolate = extrapolate_trajectory
+check_extrapolation_overlap = detect_trajectory_overlap
+check_connection_compatibility_extrapolate = assess_connection_compatibility
+find_line_connections = find_tube_connections
+fit_and_resample_single_tube = fit_and_resample_tube
+refit_and_resample_tubes = refit_and_resample_all_tubes

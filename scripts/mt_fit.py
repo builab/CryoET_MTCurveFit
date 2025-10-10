@@ -25,15 +25,15 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from utils.fit import fit_curves
 from utils.connect import (
-    find_line_connections,
-    merge_connected_lines,
-    refit_and_resample_tubes
+    find_tube_connections,
+    merge_connected_tubes,
+    refit_and_resample_all_tubes
 )
 from utils.clean import (
     calculate_all_overlaps,
     identify_tubes_to_delete,
     remove_overlapping_tubes,
-    filter_short_lines
+    filter_short_tubes
 )
 
 from utils.predict import (
@@ -147,7 +147,7 @@ def add_connect_arguments(parser: argparse.ArgumentParser) -> None:
                        help='Polynomial order for refitting (default: 3)')
     parser.add_argument('--sample_step', type=float, default=82.0,
                        help='Resampling step for refitting in Angstroms (default: 82.0)')
-    parser.add_argument('--min_part_per_line', type=int, default=5,
+    parser.add_argument('--min_part_per_tube', type=int, default=5,
                        help='Minimum particles per tube (default: 5)')
     parser.add_argument('--poly_order_seed', type=int, default=3, help=argparse.SUPPRESS)
 
@@ -342,7 +342,7 @@ def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: i
     print_info(f"Initial extrapolation: {args.dist_extrapolate} Å")
     print_info(f"Overlap threshold: {args.overlap_thres} Å")
     print_info(f"Max iterations: {args.iterations}")
-    print_info(f"Minimum particles per tube: {args.min_part_per_line}")
+    print_info(f"Minimum particles per tube: {args.min_part_per_tube}")
     
     # Iterative connection
     for i in range(1, args.iterations + 1):
@@ -350,20 +350,20 @@ def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: i
         
         n_tubes_iter_start = df_current['rlnHelicalTubeID'].nunique()
         
-        connections = find_line_connections(
+        connections = find_tube_connections(
             df=df_current,
             angpix=args.angpix,
-            overlap_thres=args.overlap_thres,
+            overlap_threshold=args.overlap_thres,
             min_seed=args.min_seed,
             dist_extrapolate=current_dist_extrapolate,
-            poly_order_seed=args.poly_order_seed
+            poly_order=args.poly_order_seed
         )
         
         if not connections:
             print(f"    No connections found")
             break
         
-        df_merged, _ = merge_connected_lines(df_current, connections)
+        df_merged, _ = merge_connected_tubes(df_current, connections)
         n_tubes_iter_end = df_merged['rlnHelicalTubeID'].nunique()
         merges_this_iter = n_tubes_iter_start - n_tubes_iter_end
         total_merges += merges_this_iter
@@ -381,14 +381,14 @@ def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: i
         if i < args.iterations:
             current_dist_extrapolate *= args.dist_scale
     
-    # Remove tubes with less than min_part_per_line
-    df_filtered = filter_short_lines(df_current, args.min_part_per_line)
+    # Remove tubes with less than min_part_per_tube
+    df_filtered = filter_short_tubes(df_current, args.min_part_per_tube)
     
     # Final refit and resample
     if total_merges > 0:
         print_info("Refitting and resampling merged tubes...")
-        df_final = refit_and_resample_tubes(
-            df_input=df_filtered,
+        df_final = refit_and_resample_all_tubes(
+            df=df_filtered,
             poly_order=args.poly_order,
             sample_step=args.sample_step,
             angpix=args.angpix
@@ -401,7 +401,7 @@ def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: i
     
     print_summary("Connection Results", [
         f"Tube groups merged: {total_merges}",
-        f"Tubes with less than {args.min_part_per_line} particles removed: {tubes_short_removed}",
+        f"Tubes with less than {args.min_part_per_tube} particles removed: {tubes_short_removed}",
         f"Final tubes: {df_final['rlnHelicalTubeID'].nunique()}",
         f"Final particles: {len(df_final)}"
     ])
@@ -421,7 +421,7 @@ def run_prediction(df_input: pd.DataFrame, df_template: pd.DataFrame,
     df_template : pd.DataFrame
         Template DataFrame with reference angles
     args : argparse.Namespace
-        Command line arguments
+        Command tube arguments
     step_num : int, optional
         Step number for pipeline execution
         
@@ -645,13 +645,13 @@ Examples:
   # Run individual steps
   %(prog)s fit input.star --angpix 14 --sample_step 82
   %(prog)s clean fitted.star --dist_thres 50
-  %(prog)s connect cleaned.star --dist_extrapolate 1500 --overlap_thres 80 --min_part_per_line 5
+  %(prog)s connect cleaned.star --dist_extrapolate 1500 --overlap_thres 80 --min_part_per_tube 5
   %(prog)s predict connected.star --template input.star --neighbor_rad 100 --max_delta_deg 20
   
   # Run full pipeline
   %(prog)s pipeline input.star --angpix 14 --sample_step 82 \\
            --dist_thres 50 --dist_extrapolate 1500 --overlap_thres 80 \\
-           --min_part_per_line 5 --neighbor_rad 100 --template input.star
+           --min_part_per_tube 5 --neighbor_rad 100 --template input.star
         """
     )
     
@@ -696,7 +696,7 @@ Examples:
                                 help='Connection iterations (default: 2)')
     pipeline_parser.add_argument('--dist_scale', type=float, default=1.5,
                                 help='Distance scale factor per iteration (default: 1.5)')
-    pipeline_parser.add_argument('--min_part_per_line', type=int, default=5,
+    pipeline_parser.add_argument('--min_part_per_tube', type=int, default=5,
                                 help='Minimum particles per tube (default: 5)')
     
     # Prediction arguments for pipeline

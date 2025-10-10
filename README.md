@@ -1,23 +1,41 @@
 # CRYOET_MTFIT
 
+Contributors: Huy Bui, Molly Yu, Zhiling Zhou
+
 ## Introduction
+
 Line fitting based on 3D template matching of filaments (MT).  
 
-Explain the code logic briefly here.
+The program will fit lines on the scatter points in the 3D template matching of microtubules. It works using several step:
 
-Some codes and ideas are based on:  
-👉 [https://github.com/PengxinChai/multi-curve-fitting](https://github.com/PengxinChai/multi-curve-fitting)
+**Step 1. Fit:** Find seeds and extend the line to fit lines and and resample a dense points
 
-> **Note:** The code is not yet fully done or tested.
+**Step 2. Clean:** Clean duplicate lines due to duplicate/overlapped points when template matching.
+
+**Step 3. Connect:** Connect lines that are likely part of a long line and resample the lines with desired periodicity.
+
+**Step 4. Predict:** Use the template matching angles to predict the initial angle for the the new connected line. This is particularly useful for ciliary microtubules as it predicts very well the polarity and initial rotational angle.
+
+Extra function (Future): 
+- For cilia tomogram with only 1 cilia, it can automatically reorder the doublet microtubule number in the same conventional order of cilia cross-section.
+- Initial angle assignment based on specific helical property
+
+Potentially, the program can be used for other filaments, which are more straight that can easily described by polynominal order 3. For more flexible filaments, perhaps a future implementation of 'spline' interpolation instead of polynominal fitting might work better.
+
+**Acknowledgement::**
+
+Some codes and ideas are based on:   [https://github.com/PengxinChai/multi-curve-fitting](https://github.com/PengxinChai/multi-curve-fitting)
+
+**Note:** The code is not yet fully done or tested.
 
 ---
 
-## Installation
+## INSTALLATION
 _To be added._
 
 ---
 
-## Usage
+## USAGE
 
 ### Initial Fit
 ```bash
@@ -46,7 +64,7 @@ mt_fit.py predict CCDC147C_001_particles_fitted_cleaned_connected.star --angpix 
 mt_fit.py pipeline CCDC147C_001_particles.star --angpix 14 --sample_step 82 --min_seed 6 --poly_order 3 --dist_thres 50 --dist_extrapolate 2000 --overlap_thres 100 --neighbor_rad 100 --template CCDC147C_001_particles.star 
 ```
 
-## USING INSDIDE CHIMERAX
+## USING INSIDE CHIMERAX
 Open ChimeraX with ArtiaX, load your template matching star file.
 
 ![ChimeraX star file visualization](imgs/TMstarfileChimeraX.png)

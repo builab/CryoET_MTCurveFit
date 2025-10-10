@@ -55,7 +55,7 @@ Open ChimeraX with ArtiaX, load your template matching star file.
 For now, we would use like this by typing in the command windows of ChimeraX:
 ```bash
 cd ~/Documents/GitHub/CryoET_MTCurveFit/scripts
-runscript mtfitchimerax.py #1.2.1 voxelSize 14 sampleStep 82 minseed 6 poly 3 cleanDistThres 50 distExtrapolate 2000 overlapThres 100 minPart 5 neighborRad 100
+runscript mtfitchimerax.py \#1.2.1 voxelSize 14 sampleStep 82 minseed 6 poly 3 cleanDistThres 50 distExtrapolate 2000 overlapThres 100 minPart 5 neighborRad 100
 ```
 
 ## VISUALIZING RESULTS

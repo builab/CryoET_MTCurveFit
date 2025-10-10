@@ -1,5 +1,6 @@
-- Further more for angle prediction (for other filament), we can do median filter and then smoothing, option --smooth
---There can be another kinds of prediction (--dphi and --dz) like the filament model in ChimeraX (later) (Determine polarity)
+- Do a basic rlnAnglePsi and rlnAngleRot for microtubule prediction (no template)
 - For cilia (9), perform a renumber rlnHelicalID (later) cilia_cluster_renumber (Make a core utils sort)
+- Further more for angle prediction (for other filament), we can do median filter and then smoothing, option --smooth (NOT priority)
+- There can be another kinds of prediction (--dphi and --dz) like the filament model in ChimeraX (later) (Determine polarity)
 - ChimeraX bundle (Does this worth the effort? Probably not)
 - Test with data

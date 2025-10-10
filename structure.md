@@ -13,6 +13,7 @@ CryoET_MTFit/
 │   ├── clean.py        # Overlap detection & filtering logic
 │   ├── connect.py      # Line connecting logic
 │   ├── view.py      	# Visualize star file
+│   ├── predict.py      # Generate proper angles from template
 │   └── io.py           # I/O utilities
 └── scripts/
     ├── mt_fit.py       # CLI wrapper to fit, clean & connect

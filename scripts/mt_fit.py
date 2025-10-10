@@ -170,6 +170,7 @@ def add_predict_arguments(parser: argparse.ArgumentParser) -> None:
 def run_fitting(file_path: str, args: argparse.Namespace, step_num: int = None) -> pd.DataFrame:
     """
     Run initial curve fitting and clustering.
+    Always resample twice the frequency of the requested sample_step to make denser lines
     
     Parameters
     ----------
@@ -208,7 +209,7 @@ def run_fitting(file_path: str, args: argparse.Namespace, step_num: int = None) 
         tomo_name=tomo_name,
         angpix=pixel_size,
         poly_order=args.poly_order,
-        sample_step=args.sample_step / pixel_size,
+        sample_step=args.sample_step / (pixel_size*2),
         integration_step=1.0 / pixel_size,
         min_seed=args.min_seed,
         max_distance_to_line=args.max_dis_to_line_ang / pixel_size,

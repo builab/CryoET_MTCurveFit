@@ -4,14 +4,7 @@ Star pipeline processing modules for filamentous structure analysis.
 """
 
 # Core computational functions
-from .fit import (
-    distance,
-    find_seed,
-    angle_evaluate,
-    resample,
-    seed_extension,
-    fit_curves
-)
+from .fit import fit_curves
 
 # I/O utilities
 from .io import (
@@ -22,53 +15,28 @@ from .io import (
 )
 
 from .clean import (
-    get_tube_bounding_boxes,
-    boxes_overlap_with_margin,
-    identify_tube_pairs_to_compare,
-    calculate_distance_shorter_to_longer,
-    calculate_all_overlaps,
-    identify_tubes_to_delete,
-    remove_overlapping_tubes,
+    clean_tubes,
     filter_short_tubes
 )
 
 from .connect import (
-    find_tube_connections,
-    merge_connected_tubes,
-    refit_and_resample_all_tubes
+    connect_tubes
 )
 
 from .predict import (
-    snap_by_filament_median,
-    map_local_avg_angles,
-    lcc_filter
+    predict_angles
 )
 
 __all__ = [
     # Fit functions
-    'distance',
-    'find_seed',
-    'angle_evaluate',
-    'resample',
-    'seed_extension',
     'fit_curves',
     # Clean functions
-    'get_line_bounding_boxes',
-    'boxes_overlap_with_margin',
-    'identify_line_pairs_to_compare',
-    'calculate_distance_shorter_to_longer',
-    'calculate_all_overlaps',
-    'identify_tubes_to_delete',
-    'remove_overlapping_tubes',
-    'filter_short_lines',
+    'clean_tubes',
+    'filter_short_tubes',
     #Connect functions
-    'find_tube_connections',
-    'merge_connected_tubes',
-    'refit_and_resample_all_tubes',
+    'connect_tubes',
     # Predict functions
-    'snap_by_filament_median',
-    'map_local_avg_angles',
-    'lcc_filter',
+    'predict_angles',
     # I/O functions,
     'validate_dataframe',
     'load_coordinates',

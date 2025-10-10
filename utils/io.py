@@ -25,7 +25,9 @@ def validate_dataframe(df: pd.DataFrame, required_columns: list = None) -> None:
         Name of the DataFrame for error messages
     required_columns : list, optional
         List of required column names
-        
+    Returns:
+        True if valid, False otherwise.        
+    
     Raises
     ------
     ValueError
@@ -33,47 +35,19 @@ def validate_dataframe(df: pd.DataFrame, required_columns: list = None) -> None:
     """
     if df is None:
         raise ValueError(f"DataFrame is None")
+        return False
+        
     if df.empty:
         raise ValueError(f"DataFrame is empty")
+        return False
+        
     if required_columns:
         missing = [col for col in required_columns if col not in df.columns]
         if missing:
             raise ValueError(f"DataFrame missing required columns: {missing}")
-
-def validate_star_file(df: pd.DataFrame, file_path: str) -> bool:
-    """
-    Validate STAR file contains required columns.
-    
-    Args:
-        df: DataFrame to validate.
-        file_path: Path to file (for error messages).
-    
-    Returns:
-        True if valid, False otherwise.
-    """
-    essential_columns = ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']
-    optional_columns = [
-        'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi', 'rlnLCCmax',
-        'rlnDetectorPixelSize', 'rlnMicrographName', 'rlnTomoName', 'rlnHelicalTubeID'
-    ]
-    
-    # Check essential columns
-    missing_essential = [col for col in essential_columns if col not in df.columns]
-    
-    if missing_essential:
-        print(f"Error: {file_path} is missing essential columns: "
-              f"{', '.join(missing_essential)}. Skipping file.")
-        return False
-    
-    # Warn about optional columns
-    missing_optional = [col for col in optional_columns if col not in df.columns]
-    
-    if missing_optional:
-        print(f"Warning: {file_path} is missing optional columns: "
-              f"{', '.join(missing_optional)}")
-    
+            return False
+            
     return True
-
 
 def load_coordinates(
     file_path: str,
@@ -97,7 +71,7 @@ def load_coordinates(
     if 'rlnCoordinateX' not in df and 'particles' in df:
         df = df['particles']
     
-    if not validate_star_file(df, file_path):
+    if not validate_dataframe(df, ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']):
         return None, None, None
     
     coords = df[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].to_numpy(dtype=float)

@@ -24,31 +24,21 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
 from utils.fit import fit_curves
-from utils.connect import (
-    find_tube_connections,
-    merge_connected_tubes,
-    refit_and_resample_all_tubes
-)
+from utils.connect import connect_tubes
+
 from utils.clean import (
-    calculate_all_overlaps,
-    identify_tubes_to_delete,
-    remove_overlapping_tubes,
+    clean_tubes,
     filter_short_tubes
 )
-
-from utils.predict import (
-    lcc_filter,
-    map_local_avg_angles,
-    snap_by_filament_median
-)
-
+    
+from utils.predict import predict_angles
 from utils.io import read_star, write_star, validate_dataframe, load_coordinates
 
 # =============================================================================
 # CONSTANTS
 # =============================================================================
 
-DEFAULT_LCC_KEEP_TOP = 70.0  # Percentage of top LCC particles to keep
+DEFAULT_LCC_KEEP_PERCENTAGE = 70.0  # Percentage of top LCC particles to keep
 
 # =============================================================================
 # UTILITY FUNCTIONS
@@ -160,8 +150,8 @@ def add_predict_arguments(parser: argparse.ArgumentParser) -> None:
                        help='Radius for finding neighbor particles in Angstroms (default: 100)')
     parser.add_argument('--max_delta_deg', type=float, default=20,
                        help='Max angle deviation within same tube in degrees (default: 20)')
-    parser.add_argument('--lcc_keep_top', type=float, default=DEFAULT_LCC_KEEP_TOP,
-                       help=f'Percentage of top LCC particles to keep (default: {DEFAULT_LCC_KEEP_TOP})')
+    parser.add_argument('--lcc_keep_percentage', type=float, default=DEFAULT_LCC_KEEP_PERCENTAGE,
+                       help=f'Percentage of LCC particles to keep (default: {DEFAULT_LCC_KEEP_PERCENTAGE})')
 
 # =============================================================================
 # PIPELINE STEPS
@@ -258,64 +248,31 @@ def run_cleaning(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int
         print("CLEANING (OVERLAP REMOVAL)")
         print("=" * 80)
 
-    # Validate input
-    validate_dataframe(df_input, required_columns=['rlnHelicalTubeID'])
-
-    n_tubes_before = df_input['rlnHelicalTubeID'].nunique()
-    n_particles_before = len(df_input)
-
     print_info(f"Distance threshold: {args.dist_thres} Å")
     print_info(f"Bounding box margin: {args.margin} Å")
-
-    # Step 1: Overlap detection
-    overlap_results = calculate_all_overlaps(
-        df=df_input,
-        margin=args.margin,
-        angpix=args.angpix
-    )
-
-    if len(overlap_results) == 0:
-        print_info("No overlapping tubes found - skipping overlap removal")
-        df_filtered = df_input.copy()
-    else:
-        tubes_to_delete = identify_tubes_to_delete(
-            overlap_results=overlap_results,
-            distance_threshold=args.dist_thres
-        )
-
-        if len(tubes_to_delete) == 0:
-            print_info(f"No tubes meet removal criteria (distance < {args.dist_thres} Å)")
-            df_filtered = df_input.copy()
-        else:
-            df_filtered = remove_overlapping_tubes(df=df_input, tubes_to_delete=tubes_to_delete)
-
-    # Step 2: Summary
-    n_tubes_after = df_filtered['rlnHelicalTubeID'].nunique()
-    n_particles_after = len(df_filtered)
-
-    tubes_removed = n_tubes_before - n_tubes_after
-    particles_removed = n_particles_before - n_particles_after
-
-    print_summary("Cleaning Results", [
-        f"Tubes removed by overlap: {tubes_removed}",
-        f"Particles removed: {particles_removed}",
-        f"Remaining tubes: {n_tubes_after}",
-        f"Remaining particles: {n_particles_after}"
-    ])
+    
+    df_filtered = clean_tubes(df=df_input,
+        angpix=args.angpix,
+        distance_threshold=args.dist_thres,
+        margin=args.margin)
 
     return df_filtered
 
 
-def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int = None) -> pd.DataFrame:
+def run_connection(
+    df_input: pd.DataFrame,
+    args: argparse.Namespace,
+    step_num: int = None
+) -> pd.DataFrame:
     """
-    Connect broken tube segments.
+    Connect broken tube segments using iterative trajectory extrapolation.
     
     Parameters
     ----------
     df_input : pd.DataFrame
         Input DataFrame with particles
     args : argparse.Namespace
-        Command line arguments
+        Command line arguments containing connection parameters
     step_num : int, optional
         Step number for pipeline execution
         
@@ -331,80 +288,32 @@ def run_connection(df_input: pd.DataFrame, args: argparse.Namespace, step_num: i
         print("CONNECTION (TRAJECTORY EXTRAPOLATION)")
         print("="*80)
     
-    # Validate input
-    validate_dataframe(df_input, required_columns=['rlnHelicalTubeID'])
+    # Run connection pipeline (without filtering)
+    df_connected = connect_tubes(
+        df=df_input,
+        angpix=args.angpix,
+        overlap_threshold=args.overlap_thres,
+        min_seed=args.min_seed,
+        dist_extrapolate=args.dist_extrapolate,
+        poly_order_seed=args.poly_order_seed,
+        poly_order_final=args.poly_order,
+        sample_step=args.sample_step,
+        max_iterations=args.iterations,
+        dist_scale=args.dist_scale
+    )
     
-    n_tubes_before = df_input['rlnHelicalTubeID'].nunique()
-    df_current = df_input.copy()
-    current_dist_extrapolate = args.dist_extrapolate
-    total_merges = 0
-    
-    print_info(f"Initial extrapolation: {args.dist_extrapolate} Å")
-    print_info(f"Overlap threshold: {args.overlap_thres} Å")
-    print_info(f"Max iterations: {args.iterations}")
-    print_info(f"Minimum particles per tube: {args.min_part_per_tube}")
-    
-    # Iterative connection
-    for i in range(1, args.iterations + 1):
-        print(f"\n  Iteration {i} (distance: {current_dist_extrapolate:.1f} Å)")
+    # Filter short tubes if requested
+    if args.min_part_per_tube > 0:
+        tubes_before = df_connected['rlnHelicalTubeID'].nunique()
+        df_final = filter_short_tubes(df_connected, args.min_part_per_tube)
+        tubes_after = df_final['rlnHelicalTubeID'].nunique()
+        tubes_removed = tubes_before - tubes_after
         
-        n_tubes_iter_start = df_current['rlnHelicalTubeID'].nunique()
-        
-        connections = find_tube_connections(
-            df=df_current,
-            angpix=args.angpix,
-            overlap_threshold=args.overlap_thres,
-            min_seed=args.min_seed,
-            dist_extrapolate=current_dist_extrapolate,
-            poly_order=args.poly_order_seed
-        )
-        
-        if not connections:
-            print(f"    No connections found")
-            break
-        
-        df_merged, _ = merge_connected_tubes(df_current, connections)
-        n_tubes_iter_end = df_merged['rlnHelicalTubeID'].nunique()
-        merges_this_iter = n_tubes_iter_start - n_tubes_iter_end
-        total_merges += merges_this_iter
-        
-        print(f"    Merged: {merges_this_iter} tube groups")
-        print(f"    Remaining: {n_tubes_iter_end} tubes")
-        
-        if n_tubes_iter_end == n_tubes_iter_start:
-            print(f"    Converged - stopping")
-            df_current = df_merged
-            break
-        
-        df_current = df_merged
-        
-        if i < args.iterations:
-            current_dist_extrapolate *= args.dist_scale
-    
-    # Remove tubes with less than min_part_per_tube
-    df_filtered = filter_short_tubes(df_current, args.min_part_per_tube)
-    
-    # Final refit and resample
-    if total_merges > 0:
-        print_info("Refitting and resampling merged tubes...")
-        df_final = refit_and_resample_all_tubes(
-            df=df_filtered,
-            poly_order=args.poly_order,
-            sample_step=args.sample_step,
-            angpix=args.angpix
-        )
+        if tubes_removed > 0:
+            print_info(f"Filtered out {tubes_removed} tubes with < {args.min_part_per_tube} particles")
+            print_info(f"Final: {tubes_after} tubes, {len(df_final)} particles")
     else:
-        print_info("No merges performed - skipping refit")
-        df_final = df_filtered
-    
-    tubes_short_removed = df_current['rlnHelicalTubeID'].nunique() - df_final['rlnHelicalTubeID'].nunique()
-    
-    print_summary("Connection Results", [
-        f"Tube groups merged: {total_merges}",
-        f"Tubes with less than {args.min_part_per_tube} particles removed: {tubes_short_removed}",
-        f"Final tubes: {df_final['rlnHelicalTubeID'].nunique()}",
-        f"Final particles: {len(df_final)}"
-    ])
+        df_final = df_connected
     
     return df_final
 
@@ -437,46 +346,24 @@ def run_prediction(df_input: pd.DataFrame, df_template: pd.DataFrame,
         print("PREDICT (ANGLE BASED ON TEMPLATE MATCH)")
         print("="*80)
 
-    # Validate input
-    validate_dataframe(df_input, required_columns=['rlnHelicalTubeID'])
-    validate_dataframe(df_template)
-
     print_info(f"Neighbor radius: {args.neighbor_rad} Å")
     print_info(f"Template file: {args.template}")
-    print_info(f"LCC keep top: {args.lcc_keep_top}%")
+    print_info(f"LCC keep percentage: {args.lcc_keep_percentage}%")
 
-    # Step 1: LCC filter (keep top percentage of high-quality matches)
-    df_filtered = lcc_filter(
+    df_all = predict_angles(
         df_input=df_input,
         df_template=df_template,
         angpix=args.angpix,
-        neighbor_rad=args.neighbor_rad,
-        keep_top=args.lcc_keep_top
-    )
-
-    # Step 2: Map local averaged angles from filtered template to input geometry
-    df_mapped = map_local_avg_angles(
-        df_input=df_input,
-        df_tpl=df_filtered,
-        angpix=args.angpix,
-        radiusA=args.neighbor_rad,
-        k=8,
-        weight_by_distance=True
-    )
-
-    # Step 3: Filament median snap (ensure consistency within each tube)
-    df_final = snap_by_filament_median(
-        df_mapped,
-        max_delta_deg=args.max_delta_deg,
-        min_points_per_filament=5
-    )
+        neighbor_radius=args.neighbor_rad,
+        lcc_keep_percent=args.lcc_keep_percentage,
+        snap_max_delta=args.max_delta_deg,
+        snap_min_points=5)
     
     print_summary("Prediction Results", [
-        f"Template particles used: {len(df_filtered)}",
-        f"Particles with predicted angles: {len(df_final)}"
+        f"Particles with predicted angles: {len(df_all[0])}"
     ])
     
-    return df_final
+    return df_all[0]
 
 # =============================================================================
 # COMMAND HANDLERS
@@ -553,11 +440,8 @@ def cmd_predict(args: argparse.Namespace) -> None:
     
     try:
         # Read input files
-        df_input = read_star(args.input)
-        validate_dataframe(df_input)
-        
+        df_input = read_star(args.input)        
         df_template = read_star(args.template)
-        validate_dataframe(df_template)
         
         df_predicted = run_prediction(df_input, df_template, args)
         

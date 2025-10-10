@@ -1,29 +1,83 @@
 #!/usr/bin/env python3
-
 """
-Cleaning overlapping & short helical tubes.
+Clean overlapping and short helical tubes.
 
 This module provides functionality to:
-- Calculate overlapped tubes within a certain distance and filter out
-- Implement a quick bounding box for screening close tubes
-- Filter tubes with smaller number of particles
+- Detect and filter overlapping tube segments
+- Use bounding box optimization for efficient spatial screening
+- Remove tubes with insufficient particle counts
 
 @Builab 2025
 """
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from scipy.spatial import cKDTree
 from typing import List, Tuple, Set, Dict, Any
 
+from .io import validate_dataframe
 
-def get_tube_bounding_boxes(
+class BoundingBox:
+    """3D bounding box for spatial screening."""
+    
+    def __init__(self, coords: np.ndarray):
+        """
+        Initialize bounding box from coordinates.
+        
+        Args:
+            coords: Array of 3D coordinates (N x 3).
+        """
+        self.min = coords.min(axis=0)
+        self.max = coords.max(axis=0)
+        self.center = (self.min + self.max) / 2
+        self.n_points = len(coords)
+    
+    def overlaps_with_margin(self, other: 'BoundingBox', margin: float) -> bool:
+        """
+        Check if this box overlaps with another box within a margin.
+        
+        Args:
+            other: Another bounding box.
+            margin: Margin in Angstroms to extend boxes.
+        
+        Returns:
+            True if boxes are within margin distance.
+        """
+        for dim in range(3):  # x, y, z
+            if (self.max[dim] + margin < other.min[dim] or 
+                other.max[dim] + margin < self.min[dim]):
+                return False
+        return True
+
+
+def extract_tube_coordinates(
+    df: pd.DataFrame,
+    tube_id: int,
+    angpix: float
+) -> np.ndarray:
+    """
+    Extract and convert coordinates for a specific tube.
+    
+    Args:
+        df: DataFrame containing particle data.
+        tube_id: Tube ID to extract.
+        angpix: Pixel size in Angstroms for conversion.
+    
+    Returns:
+        Coordinates array (N x 3) in Angstroms.
+    """
+    tube_data = df[df['rlnHelicalTubeID'] == tube_id]
+    coords = tube_data[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].values
+    return coords * angpix
+
+
+def compute_bounding_boxes(
     df: pd.DataFrame,
     tube_ids: np.ndarray,
     angpix: float
-) -> Dict[int, Dict[str, Any]]:
+) -> Dict[int, BoundingBox]:
     """
-    Calculate bounding boxes for each helical tube.
+    Calculate bounding boxes for all helical tubes.
     
     Args:
         df: DataFrame with particle coordinates.
@@ -31,157 +85,132 @@ def get_tube_bounding_boxes(
         angpix: Pixel size in Angstroms.
     
     Returns:
-        Dictionary mapping tube_id to bounding box info.
+        Dictionary mapping tube_id to BoundingBox object.
     """
     bounding_boxes = {}
     
     for tube_id in tube_ids:
-        tube_data = df[df['rlnHelicalTubeID'] == tube_id]
-        # Convert to real coordinates by multiplying with angpix
-        coords = tube_data[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].values * angpix
-        
-        min_coords = coords.min(axis=0)
-        max_coords = coords.max(axis=0)
-        
-        bounding_boxes[tube_id] = {
-            'min': min_coords,
-            'max': max_coords,
-            'center': (min_coords + max_coords) / 2,
-            'n_points': len(coords)
-        }
+        coords = extract_tube_coordinates(df, tube_id, angpix)
+        bounding_boxes[tube_id] = BoundingBox(coords)
     
     return bounding_boxes
 
 
-def boxes_overlap_with_margin(
-    box1: Dict[str, Any],
-    box2: Dict[str, Any],
-    margin: float
-) -> bool:
-    """
-    Check if two bounding boxes overlap with a margin.
-    
-    Args:
-        box1: First bounding box dictionary.
-        box2: Second bounding box dictionary.
-        margin: Margin in Angstroms to extend bounding boxes.
-    
-    Returns:
-        True if boxes are close enough to warrant detailed comparison.
-    """
-    # Check if boxes are separated in any dimension
-    for i in range(3):  # x, y, z
-        if box1['max'][i] + margin < box2['min'][i] or box2['max'][i] + margin < box1['min'][i]:
-            return False
-    return True
-
-
-def identify_tube_pairs_to_compare(
-    bounding_boxes: Dict[int, Dict[str, Any]],
+def find_proximate_tube_pairs(
+    bounding_boxes: Dict[int, BoundingBox],
     margin: float
 ) -> List[Tuple[int, int]]:
     """
-    Identify pairs of helical tubes that are close enough to compare.
+    Identify pairs of tubes that are spatially close enough to compare.
+    
+    Uses bounding box pre-screening to avoid expensive distance calculations
+    for tubes that are far apart.
     
     Args:
         bounding_boxes: Dictionary of bounding boxes for all tubes.
         margin: Margin in Angstroms for overlap detection.
     
     Returns:
-        List of tuples (shorter_tube_id, longer_tube_id).
+        List of tuples (shorter_tube_id, longer_tube_id) ordered by point count.
     """
     tube_ids = list(bounding_boxes.keys())
-    pairs_to_compare = []
+    proximate_pairs = []
     
     for i, tube_id1 in enumerate(tube_ids):
-        for tube_id2 in tube_ids[i+1:]:
-            if boxes_overlap_with_margin(bounding_boxes[tube_id1], 
-                                        bounding_boxes[tube_id2], 
-                                        margin):
-                # Order by length: shorter first, longer second
-                n_points1 = bounding_boxes[tube_id1]['n_points']
-                n_points2 = bounding_boxes[tube_id2]['n_points']
-                
-                if n_points1 <= n_points2:
-                    pairs_to_compare.append((tube_id1, tube_id2))
+        box1 = bounding_boxes[tube_id1]
+        
+        for tube_id2 in tube_ids[i + 1:]:
+            box2 = bounding_boxes[tube_id2]
+            
+            if box1.overlaps_with_margin(box2, margin):
+                # Order by length: shorter tube first
+                if box1.n_points <= box2.n_points:
+                    proximate_pairs.append((tube_id1, tube_id2))
                 else:
-                    pairs_to_compare.append((tube_id2, tube_id1))
+                    proximate_pairs.append((tube_id2, tube_id1))
     
-    return pairs_to_compare
+    return proximate_pairs
 
 
-def calculate_distance_shorter_to_longer(
-    coords_shorter: np.ndarray,
-    coords_longer: np.ndarray
+def compute_proximity_score(
+    coords_query: np.ndarray,
+    coords_reference: np.ndarray
 ) -> float:
     """
-    Calculate average minimum distance from shorter tube to longer tube.
+    Calculate average minimum distance from query points to reference points.
+    
+    For each point in the query set, finds the nearest point in the reference
+    set and returns the mean of these minimum distances.
     
     Args:
-        coords_shorter: Coordinates of shorter tube (N x 3).
-        coords_longer: Coordinates of longer tube (M x 3).
+        coords_query: Query coordinates (N x 3) in Angstroms.
+        coords_reference: Reference coordinates (M x 3) in Angstroms.
     
     Returns:
-        Average distance from points in shorter tube to nearest points in longer tube.
+        Average nearest-neighbor distance in Angstroms.
     """
-    # Build KDTree for efficient nearest neighbor search
-    tree_longer = cKDTree(coords_longer)
-    
-    # For each point in shorter line, find distance to nearest point in longer line
-    distances, _ = tree_longer.query(coords_shorter)
-    
-    # Return average distance
-    return distances.mean()
+    tree = cKDTree(coords_reference)
+    distances, _ = tree.query(coords_query)
+    return np.mean(distances)
 
 
-def calculate_all_overlaps(
+def analyze_tube_overlaps(
     df: pd.DataFrame,
     margin: float,
     angpix: float
 ) -> pd.DataFrame:
     """
-    Calculate overlaps between all helical tubes.
+    Analyze overlaps between all helical tubes using spatial screening.
+    
+    Uses a two-stage approach:
+    1. Bounding box screening to identify candidate pairs
+    2. Detailed distance calculation only for proximate pairs
     
     Args:
         df: DataFrame with particle data.
-        margin: Margin in Angstroms for bounding box overlap check.
+        margin: Margin in Angstroms for bounding box screening.
         angpix: Pixel size in Angstroms.
     
     Returns:
-        DataFrame with overlap results containing columns:
-        - shorter_tube_id
-        - longer_tube_id
-        - n_points_shorter
-        - n_points_longer
-        - avg_distance
+        DataFrame with overlap analysis containing columns:
+        - shorter_tube_id: ID of the shorter tube
+        - longer_tube_id: ID of the longer tube
+        - n_points_shorter: Number of points in shorter tube
+        - n_points_longer: Number of points in longer tube
+        - avg_distance: Average distance from shorter to longer tube
     """
-    # Get unique tube IDs
     tube_ids = df['rlnHelicalTubeID'].unique()
-    print(f"Found {len(tube_ids)} helical tubes")
+    total_tubes = len(tube_ids)
     
-    # Step 1: Get bounding boxes and identify pairs to compare
-    print("\nStep 1: Identifying tube pairs to compare...")
-    bounding_boxes = get_tube_bounding_boxes(df, tube_ids, angpix)
-    pairs_to_compare = identify_tube_pairs_to_compare(bounding_boxes, margin)
-    print(f"Found {len(pairs_to_compare)} pairs close enough to compare")
-    print(f"(Skipped {len(tube_ids)*(len(tube_ids)-1)//2 - len(pairs_to_compare)} distant pairs)")
+    print(f"\nAnalyzing {total_tubes} helical tubes for overlaps...")
+    print(f"{'='*60}")
     
-    # Step 2: Calculate detailed distances for identified pairs
-    print("\nStep 2: Calculating distances from shorter to longer tubes...")
+    # Stage 1: Bounding box screening
+    print("\nStage 1: Spatial screening with bounding boxes")
+    bounding_boxes = compute_bounding_boxes(df, tube_ids, angpix)
+    proximate_pairs = find_proximate_tube_pairs(bounding_boxes, margin)
+    
+    total_possible = total_tubes * (total_tubes - 1) // 2
+    skipped = total_possible - len(proximate_pairs)
+    
+    print(f"  Candidate pairs: {len(proximate_pairs)}")
+    print(f"  Skipped distant pairs: {skipped}")
+    print(f"  Efficiency: {100 * len(proximate_pairs) / total_possible:.1f}% "
+          f"of pairs require detailed analysis")
+    
+    if not proximate_pairs:
+        print("\n✓ No overlapping tubes detected")
+        return pd.DataFrame()
+    
+    # Stage 2: Detailed distance calculation
+    print(f"\nStage 2: Computing distances for {len(proximate_pairs)} candidate pairs")
     results = []
     
-    for shorter_id, longer_id in pairs_to_compare:
-        # Get coordinates for both tubes (convert to real coordinates)
-        coords_shorter = df[df['rlnHelicalTubeID'] == shorter_id][
-            ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']
-        ].values * angpix
+    for shorter_id, longer_id in proximate_pairs:
+        coords_shorter = extract_tube_coordinates(df, shorter_id, angpix)
+        coords_longer = extract_tube_coordinates(df, longer_id, angpix)
         
-        coords_longer = df[df['rlnHelicalTubeID'] == longer_id][
-            ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']
-        ].values * angpix
-        
-        # Calculate distance from shorter to longer
-        avg_distance = calculate_distance_shorter_to_longer(coords_shorter, coords_longer)
+        avg_distance = compute_proximity_score(coords_shorter, coords_longer)
         
         results.append({
             'shorter_tube_id': shorter_id,
@@ -191,77 +220,185 @@ def calculate_all_overlaps(
             'avg_distance': avg_distance
         })
     
-    # Convert to DataFrame for easy viewing
+    # Create results DataFrame sorted by distance
     results_df = pd.DataFrame(results)
-    if len(results_df) > 0:
-        results_df = results_df.sort_values('avg_distance')
+    if not results_df.empty:
+        results_df = results_df.sort_values('avg_distance').reset_index(drop=True)
+    
+    print(f"✓ Analysis complete")
     
     return results_df
 
 
-def identify_tubes_to_delete(
-    overlap_results: pd.DataFrame,
+def identify_overlapping_tubes(
+    overlap_analysis: pd.DataFrame,
     distance_threshold: float
 ) -> Set[int]:
     """
-    Identify which shorter tubes should be deleted based on overlap.
+    Identify shorter tubes that overlap with longer tubes.
     
     Args:
-        overlap_results: DataFrame with overlap calculations.
-        distance_threshold: Distance threshold in Angstroms.
+        overlap_analysis: DataFrame from analyze_tube_overlaps.
+        distance_threshold: Maximum average distance in Angstroms to 
+                          consider tubes as overlapping.
     
     Returns:
-        Set of tube IDs to delete.
+        Set of shorter tube IDs that should be removed.
     """
-    if len(overlap_results) == 0:
+    if overlap_analysis.empty:
         return set()
     
-    overlapping = overlap_results[overlap_results['avg_distance'] < distance_threshold]
-    tubes_to_delete = set(overlapping['shorter_tube_id'].unique())
+    overlapping = overlap_analysis[overlap_analysis['avg_distance'] < distance_threshold]
     
-    return tubes_to_delete
+    if not overlapping.empty:
+        tubes_to_remove = set(overlapping['shorter_tube_id'].unique())
+        print(f"\nIdentified {len(tubes_to_remove)} overlapping tubes to remove")
+        return tubes_to_remove
+    
+    return set()
 
 
-def remove_overlapping_tubes(
+def remove_tubes_by_id(
     df: pd.DataFrame,
-    tubes_to_delete: Set[int]
+    tube_ids_to_remove: Set[int]
 ) -> pd.DataFrame:
     """
-    Remove particles belonging to overlapping shorter tubes.
+    Remove all particles belonging to specified tubes.
     
     Args:
         df: Original DataFrame.
-        tubes_to_delete: Set of tube IDs to remove.
+        tube_ids_to_remove: Set of tube IDs to remove.
     
     Returns:
-        Filtered DataFrame with overlapping tubes removed.
+        Filtered DataFrame with specified tubes removed.
     """
-    df_filtered = df[~df['rlnHelicalTubeID'].isin(tubes_to_delete)].copy()
+    if not tube_ids_to_remove:
+        return df.copy()
+    
+    df_filtered = df[~df['rlnHelicalTubeID'].isin(tube_ids_to_remove)].copy()
+    
+    particles_removed = len(df) - len(df_filtered)
+    tubes_removed = len(tube_ids_to_remove)
+    
+    print(f"  Removed {tubes_removed} tubes ({particles_removed} particles)")
+    
     return df_filtered
 
 
-def filter_short_tubes(df: pd.DataFrame, min_part_per_tube: int) -> pd.DataFrame:
+def filter_short_tubes(
+    df: pd.DataFrame,
+    min_particles: int
+) -> pd.DataFrame:
     """
-    Filter out tubes (rlnHelicalTubeID groups) with fewer than min_part_per_tube particles.
-    If min_part_per_tube == 0, returns df unchanged.
+    Remove tubes with fewer than the minimum number of particles.
+    
+    Args:
+        df: DataFrame with particle data.
+        min_particles: Minimum number of particles required per tube.
+                      If 0, no filtering is performed.
+    
+    Returns:
+        Filtered DataFrame with short tubes removed.
+    
+    Raises:
+        ValueError: If min_particles is negative or DataFrame is missing
+                   required columns.
     """
     if df.empty:
-        print("⚠️ Input DataFrame is empty — skipping short tube filtering.")
+        print("⚠️  Input DataFrame is empty - skipping short tube filtering")
         return df
-
+    
     if 'rlnHelicalTubeID' not in df.columns:
-        raise ValueError("DataFrame must contain a 'rlnHelicalTubeID' column.")
-
-    if not isinstance(min_part_per_tube, int) or min_part_per_tube < 0:
-        raise ValueError("min_part_per_tube must be a non-negative integer.")
-
-    if min_part_per_tube == 0:
-        #print("Minimum particles per tube = 0 → skipping short tube filtering.")
+        raise ValueError("DataFrame must contain 'rlnHelicalTubeID' column")
+    
+    if not isinstance(min_particles, int) or min_particles < 0:
+        raise ValueError("min_particles must be a non-negative integer")
+    
+    if min_particles == 0:
         return df.copy()
-
+    
+    # Count particles per tube
+    tube_counts = df.groupby('rlnHelicalTubeID').size()
+    tubes_before = len(tube_counts)
+    
+    # Filter tubes with sufficient particles
     df_filtered = (
         df.groupby('rlnHelicalTubeID')
-        .filter(lambda x: len(x) >= min_part_per_tube)
+        .filter(lambda group: len(group) >= min_particles)
         .reset_index(drop=True)
     )
+    
+    tubes_after = df_filtered['rlnHelicalTubeID'].nunique()
+    tubes_removed = tubes_before - tubes_after
+    particles_removed = len(df) - len(df_filtered)
+    
+    if tubes_removed > 0:
+        print(f"\nShort tube filtering (minimum {min_particles} particles):")
+        print(f"  Removed {tubes_removed} tubes ({particles_removed} particles)")
+    
     return df_filtered
+
+
+boxes_overlap_with_margin = lambda box1, box2, margin: (
+    BoundingBox(np.array([box1['min']])).overlaps_with_margin(
+        BoundingBox(np.array([box2['min']])), margin
+    ) if isinstance(box1, dict) else box1.overlaps_with_margin(box2, margin)
+)
+
+def clean_tubes(
+    df: pd.DataFrame,
+    angpix: float,
+    distance_threshold: float,
+    margin: float = 50.0
+) -> pd.DataFrame:
+    """
+    Comprehensive tube cleaning pipeline.
+    
+    Performs two cleaning operations:
+    1. Removes overlapping shorter tubes
+    2. Removes tubes with insufficient particles
+    
+    Args:
+        df: DataFrame with particle data.
+        distance_threshold: Maximum average distance in Angstroms for overlap.
+        min_particles: Minimum particles required per tube.
+        angpix: Pixel size in Angstroms.
+        margin: Margin for bounding box screening (default: 50 Angstroms).
+    
+    Returns:
+        Cleaned DataFrame.
+    """
+    print("\n" + "="*60)
+    print("TUBE CLEANING PIPELINE")
+    print("="*60)
+    
+    validate_dataframe(df, ['rlnHelicalTubeID'])
+    
+    tubes_initial = df['rlnHelicalTubeID'].nunique()
+    particles_initial = len(df)
+    
+    print(f"\nInitial data: {tubes_initial} tubes, {particles_initial} particles")
+    
+    # Step 1: Remove overlapping tubes
+    print(f"\n[1/2] Overlap detection (threshold: {distance_threshold:.1f} Å)")
+    print("-" * 60)
+    
+    overlap_analysis = analyze_tube_overlaps(df, margin, angpix)
+    overlapping_tubes = identify_overlapping_tubes(overlap_analysis, distance_threshold)
+    df = remove_tubes_by_id(df, overlapping_tubes)
+    
+    
+    # Summary
+    tubes_final = df['rlnHelicalTubeID'].nunique()
+    particles_final = len(df)
+    
+    print("\n" + "="*60)
+    print("CLEANING SUMMARY")
+    print("="*60)
+    print(f"  Tubes:     {tubes_initial} → {tubes_final} "
+          f"({tubes_initial - tubes_final} removed)")
+    print(f"  Particles: {particles_initial} → {particles_final} "
+          f"({particles_initial - particles_final} removed)")
+    print("="*60 + "\n")
+    
+    return df

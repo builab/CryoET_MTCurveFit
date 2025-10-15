@@ -89,7 +89,7 @@ def parse_arguments():
     clean_dist_thres = 50
     dist_extrapolate = 2000
     overlap_thres = 80
-    min_part_per_line = 5
+    min_part_per_tube = 5
 
     
 
@@ -136,7 +136,7 @@ def parse_arguments():
                     print(f"Error: Invalid overlapThres '{value}'. Using default {overlap_thres}")
             elif key == "minPart":
                 try:
-                    min_part_per_line = int(value)
+                    min_part_per_tube = int(value)
                 except ValueError:
                     print(f"Error: Invalid overlapThres '{value}'. Using default {overlap_thres}")
             elif key == "neighborRad":
@@ -149,7 +149,7 @@ def parse_arguments():
             print(f"Warning: Argument '{args[i]}' has no value, skipping.")
             i += 1
 
-    return input_model_id, voxel_size, min_seed, sample_step, poly, clean_dist_thres, dist_extrapolate, overlap_thres, min_part_per_line, neighbor_rad
+    return input_model_id, voxel_size, min_seed, sample_step, poly, clean_dist_thres, dist_extrapolate, overlap_thres, min_part_per_tube, neighbor_rad
 
 def cleanup_temp_files(file_list):
     """Delete temporary files."""
@@ -165,7 +165,7 @@ def cleanup_temp_files(file_list):
         except Exception as e:
             print(f"Warning: Could not delete {file_path}: {e}")
 
-def run_mtfit_simple(input_star_file, angpix, sample_step, min_seed, poly_order, clean_dist_thres, dist_extrapolate, overlap_thres, min_part_per_line, neighbor_rad):
+def run_mtfit_simple(input_star_file, angpix, sample_step, min_seed, poly_order, clean_dist_thres, dist_extrapolate, overlap_thres, min_part_per_tube, neighbor_rad):
     """
     Constructs and runs the mt_fit_simple.py command with specified parameters.
     """
@@ -184,7 +184,7 @@ def run_mtfit_simple(input_star_file, angpix, sample_step, min_seed, poly_order,
         f"--dist_thres", str(clean_dist_thres),
         f"--dist_extrapolate", str(dist_extrapolate),
         f"--overlap_thres", str(overlap_thres),
-        f"--min_part_per_line", str(min_part_per_line),
+        f"--min_part_per_tube", str(min_part_per_tube),
         f"--neighbor_rad", str(neighbor_rad),
         f"--template", input_star_file,
     ]
@@ -220,8 +220,8 @@ def run_mtfit_simple(input_star_file, angpix, sample_step, min_seed, poly_order,
         return None
         
 def main():
-    # Parse command line arguments
-    input_model_id, voxel_size, min_seed, sample_step, poly, clean_dist_thres, dist_extrapolate, overlap_thres, min_part_per_line, neighbor_rad = parse_arguments()
+    # Parse command tube arguments
+    input_model_id, voxel_size, min_seed, sample_step, poly, clean_dist_thres, dist_extrapolate, overlap_thres, min_part_per_tube, neighbor_rad = parse_arguments()
     
 
     print(f'Input model ID: {input_model_id}')
@@ -232,7 +232,7 @@ def main():
     print(f'Clean Distance Threshold (Angstrom): {clean_dist_thres}')
     print(f'Distance Extrapolate (Angstrom): {dist_extrapolate}')
     print(f'Overlap Threshold for Connecting (Angstrom): {overlap_thres}')
-    print(f'Minimum particles per line: {min_part_per_line}')
+    print(f'Minimum particles per tube: {min_part_per_tube}')
     print(f'Neighbor radius (Angstrom): {neighbor_rad}')
 
 
@@ -275,7 +275,7 @@ def main():
             clean_dist_thres, 
             dist_extrapolate, 
             overlap_thres,
-            min_part_per_line,
+            min_part_per_tube,
             neighbor_rad
         )
         # --- 4. FINAL OUTPUT ---

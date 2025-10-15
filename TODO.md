@@ -1,6 +1,7 @@
-- Do a basic rlnAnglePsi and rlnAngleRot for microtubule prediction (no template)
-- For cilia (9), perform a renumber rlnHelicalID (later) cilia_cluster_renumber (Make a core utils sort)
+- Do a basic rlnAnglePsi and rlnAngleRot for microtubule prediction (no template).
+- Later on, need to check for polarity (does the 14PF template get right 13PF polarity)
+- For cilia (9), perform a renumber rlnHelicalID (later) cilia_cluster_renumber (Make a core utils sort.py)
 - Further more for angle prediction (for other filament), we can do median filter and then smoothing, option --smooth (NOT priority)
-- There can be another kinds of prediction (--dphi and --dz) like the filament model in ChimeraX (later) (Determine polarity)
+- There can be another kinds of prediction (--dphi and --dz) like the filament model in ChimeraX (later) (Determine polarity). Need to validate
 - ChimeraX bundle (Does this worth the effort? Probably not)
 - Test with data

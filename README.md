@@ -54,6 +54,8 @@ mt_fit.py clean CCDC147C_001_particles_fitted.star --angpix 14 --dist_thres 50
 mt_fit.py connect CCDC147C_001_particles_fitted_cleaned.star --dist_extrapolate 1500 --angpix 14 --min_seed 5 --overlap_thres 80 --sample_step 82 --min_part_per_tube
 ```
 
+To allow connect far apart tubes, increase the --dist_extrapolate and --overlap_thres
+
 ### Predict
 ```bash
 mt_fit.py predict CCDC147C_001_particles_fitted_cleaned_connected.star --angpix 14 --template CCDC147C_001_particles.star --neighbor_rad 100 --max_delta_degree 15

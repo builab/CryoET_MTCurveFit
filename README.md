@@ -8,19 +8,19 @@ Line fitting based on 3D template matching of filaments (MT).
 
 The program will fit lines on the scatter points in the 3D template matching of microtubules. It works using several step:
 
-**Step 1. Fit:** Find seeds and extend the line to fit lines and and resample a dense points
+**Step 1. Fit:** Find seeds and extend the line to fit lines and resample dense points
 
-**Step 2. Clean:** Clean duplicate lines due to duplicate/overlapped points when template matching.
+**Step 2. Clean:** Clean duplicate lines due to duplicate/overlapped points when template matching with optional clean using Psi angle.
 
-**Step 3. Connect:** Connect lines that are likely part of a long line and resample the lines with desired periodicity.
+**Step 3. Connect:** Connect lines that are likely part of a long line and resample the lines with the desired periodicity.
 
-**Step 4. Predict:** Use the template matching angles to predict the initial angle for the the new connected line. This is particularly useful for ciliary microtubules as it predicts very well the polarity and initial rotational angle.
+**Step 4. Predict:** Use the template matching angles to predict the initial angle for the new connected line. This is particularly useful for ciliary microtubules as it predicts very well the polarity and initial rotational angle.
 
 Extra function (Future): 
-- For cilia tomogram with only 1 cilia, it can automatically reorder the doublet microtubule number in the same conventional order of cilia cross-section.
-- Initial angle assignment based on specific helical property
+- For tomograms with only 1 cilia, it can automatically reorder the doublet microtubule number in the same conventional order of cilia cross-section.
+- Initial angle assignment based on specific helical property.
 
-Potentially, the program can be used for other filaments, which are more straight that can easily described by polynominal order 3. For more flexible filaments, perhaps a future implementation of 'spline' interpolation instead of polynominal fitting might work better.
+Potentially, the program can be used for other filaments, which are more straight and can easily be described by a polynomial of order 3. For more flexible filaments, perhaps a future implementation of 'spline' interpolation instead of polynomial fitting might work better.
 
 **Acknowledgement::**
 
@@ -73,7 +73,7 @@ Open ChimeraX with ArtiaX, load your template matching star file.
 ![ChimeraX star file visualization](imgs/TMstarfileChimeraX.png)
 
 
-For now, we would use like this by typing in the command windows of ChimeraX:
+For now, we would use it like this by typing in the command windows of ChimeraX:
 ```bash
 cd ~/Documents/GitHub/CryoET_MTCurveFit/scripts
 runscript mtfitchimerax.py #1.2.1 voxelSize 14 sampleStep 82 minseed 6 poly 3 cleanDistThres 50 distExtrapolate 2000 overlapThres 100 minPart 5 neighborRad 100

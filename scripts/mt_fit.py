@@ -131,15 +131,15 @@ def add_connect_arguments(parser: argparse.ArgumentParser) -> None:
                        help='Connection iterations (default: 2)')
     parser.add_argument('--dist_scale', type=float, default=1.5,
                        help='Distance scale factor per iteration (default: 1.5)')
-    parser.add_argument('--min_seed', type=int, default=6,
-                       help='Minimum seed points (default: 6)')
+    parser.add_argument('--min_seed', type=int, default=5,
+                       help='Minimum seed points (default: 5)')
     parser.add_argument('--poly_order', type=int, default=3,
                        help='Polynomial order for refitting (default: 3)')
     parser.add_argument('--sample_step', type=float, default=82.0,
                        help='Resampling step for refitting in Angstroms (default: 82.0)')
     parser.add_argument('--min_part_per_tube', type=int, default=5,
                        help='Minimum particles per tube (default: 5)')
-    parser.add_argument('--poly_order_seed', type=int, default=3, help=argparse.SUPPRESS)
+    parser.add_argument('--poly_order_seed', type=int, default=1, help=argparse.SUPPRESS)
 
 
 def add_predict_arguments(parser: argparse.ArgumentParser) -> None:

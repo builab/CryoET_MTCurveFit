@@ -78,6 +78,45 @@ def print_error(message: str) -> None:
     """Print error message."""
     print(f"[ERROR] {message}", file=sys.stderr)
 
+def parse_psi_range(psi_range_str: str) -> tuple:
+    """
+    Parse psi range string into (psi_min, psi_max, filter_psi).
+    
+    Args:
+        psi_range_str: String like "-30,30" or None
+    
+    Returns:
+        Tuple of (psi_min, psi_max, filter_psi)
+    """
+    if psi_range_str is None:
+        return 0.0, 180.0, False
+    
+    try:
+        parts = psi_range_str.split(',')
+        if len(parts) != 2:
+            raise ValueError("psi_range must be in format 'min,max'")
+        
+        psi_min = float(parts[0].strip())
+        psi_max = float(parts[1].strip())
+        
+        # Check if range covers everything (no filtering needed)
+        # Normalize angles to compare
+        def normalize_angle(angle):
+            return ((angle + 180) % 360) - 180
+        
+        psi_min_norm = normalize_angle(psi_min)
+        psi_max_norm = normalize_angle(psi_max)
+        
+        # If range is effectively [-180, 180] or [0, 180] with opposites, skip filtering
+        # For simplicity, just check if it's a 180° range
+        range_size = abs(psi_max_norm - psi_min_norm)
+        if range_size >= 180:
+            return psi_min, psi_max, False
+        
+        return psi_min, psi_max, True
+    
+    except ValueError as e:
+        raise ValueError(f"Invalid psi_range format: {psi_range_str}. {e}")
 
 # =============================================================================
 # ARGUMENT PARSERS
@@ -119,8 +158,12 @@ def add_clean_arguments(parser: argparse.ArgumentParser) -> None:
                        help='Overlap removal threshold in Angstroms (default: 50)')
     parser.add_argument('--margin', type=float, default=500,
                        help='Bounding box margin in Angstroms (default: 500)')
-
-
+    parser.add_argument('--psi_min', type=float, default=0.0,
+                   help='Minimum rlnAnglePsi angle in degrees (default: 0)')
+    parser.add_argument('--psi_max', type=float, default=180.0,
+                   help='Maximum rlnAnglePsi angle in degrees (default: 180)')
+                   
+                   
 def add_connect_arguments(parser: argparse.ArgumentParser) -> None:
     """Add connection-specific arguments."""
     parser.add_argument('--dist_extrapolate', type=float, required=True,
@@ -254,7 +297,9 @@ def run_cleaning(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int
     df_filtered = clean_tubes(df=df_input,
         angpix=args.angpix,
         distance_threshold=args.dist_thres,
-        margin=args.margin)
+        margin=args.margin,
+        psi_min=args.psi_min,
+        psi_max=args.psi_max)
 
     return df_filtered
 

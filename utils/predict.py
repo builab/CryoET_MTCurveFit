@@ -28,6 +28,9 @@ DEFAULT_MAX_NEIGHBORS = 8
 DEFAULT_SNAP_MAX_DELTA = 20.0  # degrees
 DEFAULT_MIN_FILAMENT_POINTS = 5
 
+def normalize_angle(angle: float) -> float:
+    """Normalize angle to range [-180, 180]."""
+    return ((angle + 180) % 360) - 180
 
 def circular_mean(angles: np.ndarray, weights: Optional[np.ndarray] = None) -> float:
     """
@@ -410,6 +413,10 @@ def predict_angles(
     print("\n" + "="*60)
     print("PIPELINE COMPLETE")
     print("="*60 + "\n")
+    
+    # Mapping angle for writing
+    df_final['rlnAnglePsi'] = normalize_angle(df_final['rlnAnglePsi'].values)
+    df_final['rlnAngleRot'] = normalize_angle(df_final['rlnAngleRot'].values)
     
     return df_final, intermediates
     

@@ -345,25 +345,94 @@ boxes_overlap_with_margin = lambda box1, box2, margin: (
     ) if isinstance(box1, dict) else box1.overlaps_with_margin(box2, margin)
 )
 
+    
+def filter_tubes_by_psi(df: pd.DataFrame, minAngle: float, maxAngle: float) -> pd.DataFrame:
+    """
+    Filter particles by rlnAnglePsi range, accounting for bidirectional filaments.
+    
+    Since filament direction may be ambiguous, this keeps particles in BOTH
+    the specified range [minAngle, maxAngle] AND the opposite direction 
+    [minAngle±180, maxAngle±180].
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing star file data with 'rlnAnglePsi' column
+    minAngle : float
+        Minimum angle in degrees (will be normalized to [-180, 180])
+    maxAngle : float
+        Maximum angle in degrees (will be normalized to [-180, 180])
+        
+    Returns
+    -------
+    pd.DataFrame
+        Filtered DataFrame containing particles in both directional ranges
+    """
+    # Normalize input angles to [-180, 180]
+    def normalize_angle(angle):
+        return ((angle + 180) % 360) - 180
+    
+    minAngle = normalize_angle(minAngle)
+    maxAngle = normalize_angle(maxAngle)
+    
+    # Calculate opposite direction (add/subtract 180°)
+    minAngle_opposite = normalize_angle(minAngle + 180)
+    maxAngle_opposite = normalize_angle(maxAngle + 180)
+    
+    print(f"  Primary range: [{minAngle:.1f}°, {maxAngle:.1f}°]")
+    print(f"  Opposite range: [{minAngle_opposite:.1f}°, {maxAngle_opposite:.1f}°]")
+    
+    # Get psi values
+    psi = df['rlnAnglePsi'].values
+    
+    print(f"  Input psi range: [{psi.min():.1f}°, {psi.max():.1f}°]")
+    
+    # Handle wrap-around cases
+    def in_range(angles, min_ang, max_ang):
+        if min_ang <= max_ang:
+            # Normal case: no wrap-around
+            return (angles >= min_ang) & (angles <= max_ang)
+        else:
+            # Wrap-around case: e.g., [170, -170]
+            return (angles >= min_ang) | (angles <= max_ang)
+    
+    # Check if in primary range OR opposite range
+    mask_primary = in_range(psi, minAngle, maxAngle)
+    mask_opposite = in_range(psi, minAngle_opposite, maxAngle_opposite)
+    
+    print(f"  Particles in primary range: {mask_primary.sum()}")
+    print(f"  Particles in opposite range: {mask_opposite.sum()}")
+    
+    # Combine masks
+    mask_combined = mask_primary | mask_opposite
+    
+    print(f"  Total particles kept: {mask_combined.sum()} / {len(df)}")
+    
+    return df[mask_combined].copy()
+    
+
 def clean_tubes(
     df: pd.DataFrame,
     angpix: float,
     distance_threshold: float,
-    margin: float = 50.0
+    margin: float = 50.0,
+    psi_min: float = 0.0,
+    psi_max: float = 180.0,
 ) -> pd.DataFrame:
     """
     Comprehensive tube cleaning pipeline.
     
-    Performs two cleaning operations:
-    1. Removes overlapping shorter tubes
-    2. Removes tubes with insufficient particles
+    Performs cleaning operations:
+    1. Filters particles by rlnAnglePsi direction (if not default range)
+    2. Removes overlapping shorter tubes
     
     Args:
         df: DataFrame with particle data.
-        distance_threshold: Maximum average distance in Angstroms for overlap.
-        min_particles: Minimum particles required per tube.
         angpix: Pixel size in Angstroms.
+        distance_threshold: Maximum average distance in Angstroms for overlap.
         margin: Margin for bounding box screening (default: 50 Angstroms).
+        psi_min: Minimum rlnAnglePsi angle in degrees (default: 0).
+        psi_max: Maximum rlnAnglePsi angle in degrees (default: 180).
     
     Returns:
         Cleaned DataFrame.
@@ -379,8 +448,28 @@ def clean_tubes(
     
     print(f"\nInitial data: {tubes_initial} tubes, {particles_initial} particles")
     
-    # Step 1: Remove overlapping tubes
-    print(f"\n[1/2] Overlap detection (threshold: {distance_threshold:.1f} Å)")
+    # Determine if psi filtering should be applied
+    filter_psi = not (psi_min == 0.0 and psi_max == 180.0)
+    
+    # Step 1: Filter by psi direction
+    if filter_psi and 'rlnAnglePsi' in df.columns:
+        print(f"\n[1/2] Psi direction filtering (range: [{psi_min:.1f}°, {psi_max:.1f}°])")
+        print("-" * 60)
+        
+        particles_before = len(df)
+        df = filter_tubes_by_psi(df, psi_min, psi_max)
+        particles_after = len(df)
+        particles_removed = particles_before - particles_after
+        
+        if particles_removed > 0:
+            print(f"  Removed {particles_removed} particles outside angular range")
+            print(f"  Remaining: {particles_after} particles")
+        else:
+            print(f"  ✓ All particles within angular range")
+    
+    # Step 2: Remove overlapping tubes
+    step_num = 2 if filter_psi else 1
+    print(f"\n[{step_num}/2] Overlap detection (threshold: {distance_threshold:.1f} Å)")
     print("-" * 60)
     
     overlap_analysis = analyze_tube_overlaps(df, margin, angpix)

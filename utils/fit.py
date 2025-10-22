@@ -208,7 +208,8 @@ def resample(
             d_xy = np.sqrt(dx**2 + dy**2)
             
             # Angle in XY plane (rlnAngleYX)
-            angle_yx = math.degrees(math.atan2(dy, dx))
+            # @Builab proper Relion angle calculation
+            angle_yx = math.degrees(math.atan2(-dy, dx))
             
             # Angle with respect to XY plane (rlnAngleZXY)
             dz = next_pos[2] - current_pos[2]

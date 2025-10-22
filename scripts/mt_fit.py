@@ -299,7 +299,8 @@ def run_connection(
         poly_order_final=args.poly_order,
         sample_step=args.sample_step,
         max_iterations=args.iterations,
-        dist_scale=args.dist_scale
+        dist_scale=args.dist_scale,
+        debug=True
     )
     
     # Filter short tubes if requested

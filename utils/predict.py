@@ -345,6 +345,166 @@ def snap_angles_to_filament_median(
     
     return df_output
 
+def fit_polynomial(x, y, order=2):
+    """
+    Fit polynomial to data.
+    
+    Returns:
+        Tuple of (fitted_y, residuals, rmse, poly_object)
+    """
+    # Ensure there is enough data for fitting (at least order + 1 points)
+    if len(x) <= order:
+        return np.full_like(y, np.nan), np.full_like(y, np.nan), np.nan, None
+
+    coeffs = np.polyfit(x, y, order)
+    poly = np.poly1d(coeffs)
+    fitted_y = poly(x)
+    residuals = y - fitted_y
+    rmse = np.sqrt(np.mean(residuals**2))
+    return fitted_y, residuals, rmse, poly
+
+
+def robust_mad_outlier_detection(residuals, threshold=3.5):
+    """
+    Detects outliers using the Modified Z-score based on the Median Absolute Deviation (MAD).
+    """
+    if len(residuals) < 5: 
+        return np.zeros_like(residuals, dtype=bool)
+
+    median_residual = np.median(residuals)
+    mad = np.median(np.abs(residuals - median_residual))
+    
+    if mad == 0:
+        return np.abs(residuals - median_residual) > 1e-6 
+
+    # 0.6745 is the correction factor for consistency with Gaussian Z-score
+    modified_z_score = 0.6745 * (residuals - median_residual) / mad
+    
+    is_outlier = np.abs(modified_z_score) > threshold
+    return is_outlier
+
+
+def iterative_fit_and_detect(particle_indices, angles, order=2, n_iterations=2):
+    """
+    Performs iterative polynomial fitting and MAD outlier detection (2 steps).
+    
+    Returns:
+        Tuple: (final_fitted_angles, total_outliers_mask, final_rmse, final_poly_object)
+    """
+    
+    N = len(angles)
+    total_outliers_mask = np.zeros(N, dtype=bool)
+    current_inlier_indices = np.arange(N)
+    
+    final_fitted_angles = np.full(N, np.nan)
+    final_rmse = np.nan
+    final_poly = None
+    
+    for i in range(n_iterations):
+        
+        # 1. Get current inlier data
+        x_in = particle_indices[current_inlier_indices]
+        y_in = angles[current_inlier_indices]
+        
+        # Skip if not enough data remains
+        if len(x_in) <= order:
+            break
+            
+        # 2. Fit polynomial to inliers and get the poly object
+        _, _, _, poly = fit_polynomial(x_in, y_in, order)
+        
+        # 3. Calculate fitted line and residuals for ALL original points
+        fitted_angles_all = poly(particle_indices)
+        residuals_all = angles - fitted_angles_all
+        
+        # 4. Detect outliers among the current inliers
+        residuals_for_detection = residuals_all[current_inlier_indices]
+        is_outlier_in_subset = robust_mad_outlier_detection(residuals_for_detection)
+        
+        # 5. Map detected outliers back to the original index space
+        outlier_indices_original = current_inlier_indices[is_outlier_in_subset]
+        
+        # 6. Break if no new outliers found
+        if len(outlier_indices_original) == 0:
+            final_fitted_angles = fitted_angles_all
+            final_poly = poly
+            final_rmse = np.sqrt(np.mean((angles[~total_outliers_mask] - fitted_angles_all[~total_outliers_mask])**2))
+            break
+            
+        # 7. Update the total outlier mask
+        total_outliers_mask[outlier_indices_original] = True
+        
+        # 8. Update the current inlier indices for the next iteration
+        current_inlier_indices = np.where(~total_outliers_mask)[0]
+        
+        # 9. Record final results if this is the last iteration
+        if i == n_iterations - 1:
+            final_fitted_angles = fitted_angles_all
+            final_poly = poly
+            final_rmse = np.sqrt(np.mean((angles[~total_outliers_mask] - fitted_angles_all[~total_outliers_mask])**2))
+
+    # Return only the essential items for correction
+    return total_outliers_mask, final_poly
+
+
+def smooth_angles(df):
+    """
+    Reads star df, performs iterative angle correction, and returns the corrected df.
+    Prints the total number of detected and corrected outlier particles.
+    """    
+    df_corrected = df.copy()
+    grouped = df.groupby('rlnHelicalTubeID')
+    
+    angle_names = ['rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi']
+    
+    # NEW: Initialize counter
+    total_outliers_corrected = 0 
+
+    # --- Iterative Correction Loop ---
+    for tube_id, tube_data in grouped:
+        particle_indices = np.arange(len(tube_data))
+        tube_masks = {}
+        tube_polys = {}
+        
+        # 1. Run iterative fit and detection for all three angles
+        for angle_col in angle_names:
+            angles = tube_data[angle_col].values
+            
+            # Get the mask and polynomial object
+            total_outliers_mask, final_poly = \
+                iterative_fit_and_detect(particle_indices, angles, order=2, n_iterations=2)
+            
+            tube_masks[angle_col] = total_outliers_mask
+            tube_polys[angle_col] = final_poly
+
+        # 2. Global Outlier Identification (Flag if outlier in ANY angle)
+        global_outlier_mask = np.zeros(len(tube_data), dtype=bool)
+        for angle in angle_names:
+             global_outlier_mask = global_outlier_mask | tube_masks[angle]
+
+        # 3. Extrapolation and Data Replacement
+        if global_outlier_mask.any():
+            # NEW: Count outliers for this tube and add to total
+            outlier_count = global_outlier_mask.sum()
+            total_outliers_corrected += outlier_count
+            
+            indices_in_tube = tube_data.index
+            outlier_indices_original_df = indices_in_tube[global_outlier_mask]
+            outlier_indices_local = particle_indices[global_outlier_mask]
+            
+            for angle in angle_names:
+                poly = tube_polys[angle]
+                # Calculate new (extrapolated) values using the final robust fit
+                extrapolated_values = poly(outlier_indices_local)
+                
+                # Replace the values in the corrected DataFrame copy
+                df_corrected.loc[outlier_indices_original_df, angle] = extrapolated_values
+	
+    # NEW: Print summary
+    print(f"  Total outlier found and corrected: {total_outliers_corrected}")
+    
+    return df_corrected
+
 
 def predict_angles(
     df_input: pd.DataFrame,
@@ -362,6 +522,7 @@ def predict_angles(
     1. Filter template by LCC scores
     2. Map angles from template to input
     3. Snap outlier angles to filament medians
+    4. Smooth the angles using smooth_angles (might not work well with singlet microtubule)
     
     Args:
         df_input: Input particles to predict angles for.
@@ -410,14 +571,19 @@ def predict_angles(
         snap_min_points
     )
     
-    print("\n" + "="*60)
-    print("PIPELINE COMPLETE")
-    print("="*60 + "\n")
-    
     # Mapping angle for writing
     df_final['rlnAnglePsi'] = normalize_angle(df_final['rlnAnglePsi'].values)
     df_final['rlnAngleRot'] = normalize_angle(df_final['rlnAngleRot'].values)
     
-    return df_final, intermediates
+    print(f"\n{'='*60}")
+    print("FILAMENT ANGLE SMOOTHING")
+    print(f"{'='*60}")
+    df_corrected = smooth_angles(df_final)
+    
+    print("\n" + "="*60)
+    print("PIPELINE COMPLETE")
+    print("="*60 + "\n")
+    
+    return df_corrected, intermediates
     
     

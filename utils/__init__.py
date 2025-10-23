@@ -11,7 +11,8 @@ from .io import (
     validate_dataframe,
     load_coordinates,
     read_star,
-    write_star
+    write_star,
+    combine_star_files
 )
 
 from .clean import (

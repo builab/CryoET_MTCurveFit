@@ -12,6 +12,8 @@ from typing import Tuple, Optional
 import numpy as np
 import pandas as pd
 import starfile
+from pathlib import Path
+
 
 def validate_dataframe(df: pd.DataFrame, required_columns: list = None) -> None:
     """
@@ -132,4 +134,135 @@ def write_star(df: pd.DataFrame, file_path: str, overwrite: bool = True) -> None
         overwrite: Whether to overwrite existing file.
     """
     starfile.write(df, file_path, overwrite=overwrite)
+    
+
+def convert_to_relionwarp(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert STAR file DataFrame to relionwarp format.
+    
+    Args:
+        df: Input DataFrame with particle data.
+    
+    Returns:
+        DataFrame in relionwarp format.
+    """
+    # Create output DataFrame with required columns
+    output_df = pd.DataFrame()
+    
+    # Handle rlnTomoName - add .tomostar extension if not present
+    if 'rlnTomoName' in df.columns:
+        output_df['rlnTomoName'] = df['rlnTomoName'].apply(
+            lambda x: x if x.endswith('.tomostar') else f"{x}.tomostar"
+        )
+    else:
+        raise ValueError("Input STAR file missing rlnTomoName column")
+    
+    # Copy coordinate columns
+    for col in ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']:
+        if col in df.columns:
+            output_df[col] = df[col]
+        else:
+            raise ValueError(f"Input STAR file missing {col} column")
+    
+    # Copy angle columns
+    for col in ['rlnAngleTilt', 'rlnAnglePsi', 'rlnAngleRot']:
+        if col in df.columns:
+            output_df[col] = df[col]
+        else:
+            raise ValueError(f"Input STAR file missing {col} column")
+    
+    # Set origin columns to 0
+    output_df['rlnOriginXAngst'] = 0.0
+    output_df['rlnOriginYAngst'] = 0.0
+    output_df['rlnOriginZAngst'] = 0.0
+    
+    # Copy rlnHelicalTubeID if present
+    if 'rlnHelicalTubeID' in df.columns:
+        output_df['rlnHelicalTubeID'] = df['rlnHelicalTubeID']
+    
+    # Handle pixel size: prefer rlnImagePixelSize, fallback to rlnDetectorPixelSize
+    if 'rlnImagePixelSize' in df.columns:
+        output_df['rlnImagePixelSize'] = df['rlnImagePixelSize']
+    elif 'rlnDetectorPixelSize' in df.columns:
+        output_df['rlnImagePixelSize'] = df['rlnDetectorPixelSize']
+    else:
+        raise ValueError("Input STAR file missing both rlnImagePixelSize and rlnDetectorPixelSize columns")
+    
+    return output_df
+
+
+def combine_star_files(input_patterns: list, output_file: str) -> None:
+    """
+    Combine multiple STAR files into a single relionwarp file.
+    
+    Args:
+        input_patterns: List of file paths or glob patterns to match input STAR files.
+        output_file: Output file path for combined relionwarp STAR file.
+    """
+    # Collect all input files (expanding patterns if needed)
+    input_files = []
+    for pattern in input_patterns:
+        # Check if it's an exact file path
+        if Path(pattern).exists():
+            input_files.append(pattern)
+        else:
+            # Try as a glob pattern
+            matched_files = glob.glob(pattern)
+            if matched_files:
+                input_files.extend(matched_files)
+            else:
+                print(f"Warning: No files found for pattern: {pattern}")
+    
+    # Remove duplicates and sort
+    input_files = sorted(set(input_files))
+    
+    if not input_files:
+        print(f"Error: No input files found")
+        sys.exit(1)
+    
+    print(f"Found {len(input_files)} files to process")
+    
+    # List to store all DataFrames
+    all_dfs = []
+    
+    # Read and convert each file
+    for file_path in input_files:
+        print(f"Processing: {file_path}")
+        try:
+            df = read_star(file_path)
+            
+            # Validate required columns
+            required_cols = [
+                'rlnTomoName',
+                'rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ',
+                'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi'
+            ]
+            validate_dataframe(df, required_cols)
+            
+            # Check for at least one pixel size column
+            if 'rlnImagePixelSize' not in df.columns and 'rlnDetectorPixelSize' not in df.columns:
+                raise ValueError("Missing both rlnImagePixelSize and rlnDetectorPixelSize columns")
+            
+            # Convert to relionwarp format
+            converted_df = convert_to_relionwarp(df)
+            all_dfs.append(converted_df)
+            print(f"  - Added {len(converted_df)} particles")
+            
+        except Exception as e:
+            print(f"  - Error processing {file_path}: {e}")
+            print(f"  - Skipping this file...")
+            continue
+    
+    if not all_dfs:
+        print("Error: No valid STAR files were processed")
+        sys.exit(1)
+    
+    # Combine all DataFrames
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+    print(f"\nTotal particles combined: {len(combined_df)}")
+    
+    # Write output file
+    print(f"Writing output to: {output_file}")
+    write_star(combined_df, output_file, overwrite=True)
+    print("Done!")
 

@@ -2,7 +2,7 @@ CryoET_MTFit/
 ├── install.sh			# Installing script
 ├── source-env.sh		# Source script
 ├── requirements.txt	# Requirements
-├── TODO.md			# TO DO
+├── TODO.md			    # TO DO
 ├── README.md			
 ├── structure.md		# Source script
 ├── examples/			# Test example
@@ -14,8 +14,11 @@ CryoET_MTFit/
 │   ├── connect.py      # Line connecting logic
 │   ├── view.py      	# Visualize star file
 │   ├── predict.py      # Generate proper angles from template
+│   ├── sort.py         # Sort cilia
 │   └── io.py           # I/O utilities
 └── scripts/
     ├── mt_fit.py       # CLI wrapper to fit, clean & connect
     ├── view_star_.py   # CLI wrapper to visualize star file
+    ├── visualize_star_angles.py   # Visualize angles from star file
+    ├── combine_mtstar2relionwarp.py   # Combine star files to a single file
     └── mtfitchimerax.py     # ChimeraX interface of mt_fit.py pipeline only

@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 
+
 def distance(p1: np.ndarray, p2: np.ndarray) -> float:
     """Calculate Euclidean distance between two points (2D or 3D)."""
     return np.linalg.norm(p1 - p2)

@@ -20,3 +20,6 @@ v0.9.3
  
 v0.9.4
  - Finish combine_mtstar2relionwarp.py to combine the output file to a single star file used for Warp export
+ 
+v0.9.5
+ - Better name sanitization.

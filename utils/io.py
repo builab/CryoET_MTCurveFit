@@ -6,7 +6,8 @@ I/O utilities for STAR file processing.
 @Builab 2025
 """
 
-import os
+import os,sys
+import glob
 import re
 from typing import Tuple, Optional
 import numpy as np
@@ -14,6 +15,14 @@ import pandas as pd
 import starfile
 from pathlib import Path
 
+_RE = re.compile(r'^(.*_\d+)_\d+(?:\.\d+)?Apx$', re.IGNORECASE)
+
+def sanitize_name(name: str) -> str:
+    """Return sanitized name or original name if it doesn't match the pattern."""
+    m = _RE.match(name)
+    if m:
+        return f"{m.group(1)}"
+    return name
 
 def validate_dataframe(df: pd.DataFrame, required_columns: list = None) -> None:
     """
@@ -69,7 +78,8 @@ def load_coordinates(
     if not file_path.endswith(".star"):
         raise ValueError(f"Unsupported file format: {file_path}. Only .star files supported.")
     
-    df = starfile.read(file_path)
+    df = read_star(file_path)
+    
     if 'rlnCoordinateX' not in df and 'particles' in df:
         df = df['particles']
     
@@ -86,31 +96,15 @@ def load_coordinates(
         print(f"  - rlnDetectorPixelSize not found, using --angpix: {angpix}")
     
     # Handle tomogram name (priority: rlnMicrographName > rlnTomoName > filename)
-    tomo_name = None
-    
-    if 'rlnMicrographName' in df.columns:
-        tomo_name = df['rlnMicrographName'].iloc[0]
-    elif 'rlnTomoName' in df.columns:
-        tomo_name = df['rlnTomoName'].iloc[0]
-        if tomo_name.endswith('.tomostar'):
-            tomo_name = tomo_name[:-9]
-            print(f"  - Removed .tomostar extension from rlnTomoName: {tomo_name}")
-    
-    if tomo_name is None:
-        match = re.match(r"^(.+?_\d{2,3})", os.path.basename(file_path))
-        if match:
-            tomo_name = match.group(1)
-        else:
-            tomo_name = os.path.splitext(os.path.basename(file_path))[0]
-
-        print(f"  - No rlnMicrographName or rlnTomoName found, using modified filename: {tomo_name}")
-    
+    tomo_name = df['rlnTomoName'].iloc[0]
+        
     return coords, tomo_name, detector_pixel_size
 
 
 def read_star(file_path: str) -> pd.DataFrame:
     """
     Read STAR file into DataFrame.
+    Take care of name
     
     Args:
         file_path: Path to STAR file.
@@ -121,6 +115,21 @@ def read_star(file_path: str) -> pd.DataFrame:
     df = starfile.read(file_path)
     if 'rlnCoordinateX' not in df and 'particles' in df:
         df = df['particles']
+
+    # --- Step 1: Rename column if needed ---
+    if 'rlnMicrographName' in df.columns and 'rlnTomoName' not in df.columns:
+        df = df.rename(columns={'rlnMicrographName': 'rlnTomoName'})
+        
+    # --- Step 2: Remove trailing .tomostar first ---    
+    if 'rlnTomoName' in df.columns:
+    	# Sanitize tomoName
+        df['rlnTomoName'] = df['rlnTomoName'].str.replace(r'\.tomostar$', '', case=False, regex=True)
+        df['rlnTomoName'] = df['rlnTomoName'].apply(sanitize_name)
+    else:
+        raise ValueError("Input STAR file missing rlnTomoName column")
+        
+    print(f'Read {file_path} and sanitize rlnTomoName')
+
     return df
 
 
@@ -151,6 +160,7 @@ def convert_to_relionwarp(df: pd.DataFrame) -> pd.DataFrame:
     
     # Handle rlnTomoName - add .tomostar extension if not present
     if 'rlnTomoName' in df.columns:
+    	# Sanitize tomoName
         output_df['rlnTomoName'] = df['rlnTomoName'].apply(
             lambda x: x if x.endswith('.tomostar') else f"{x}.tomostar"
         )
@@ -189,6 +199,7 @@ def convert_to_relionwarp(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError("Input STAR file missing both rlnImagePixelSize and rlnDetectorPixelSize columns")
     
     return output_df
+
 
 
 def combine_star_files(input_patterns: list, output_file: str) -> None:
@@ -260,6 +271,7 @@ def combine_star_files(input_patterns: list, output_file: str) -> None:
     # Combine all DataFrames
     combined_df = pd.concat(all_dfs, ignore_index=True)
     print(f"\nTotal particles combined: {len(combined_df)}")
+    
     
     # Write output file
     print(f"Writing output to: {output_file}")

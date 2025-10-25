@@ -1,3 +1,11 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+"""
+A quick star file viewer
+If there is rlnHelicalTubeID, then it will display as Tube.
+"""
+
 import argparse
 import sys
 import os

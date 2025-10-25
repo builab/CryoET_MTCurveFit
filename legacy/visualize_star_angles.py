@@ -5,17 +5,16 @@ Visualize Euler angles (Rot, Tilt, Psi) for helical tubes from RELION star file.
 This script creates a multi-panel visualization showing how the three Euler angles
 vary along each helical tube. Each tube is colored consistently across all subplots.
 
-The --fit_line option now:
-1. Fits a polynomial and plots the **fitted line** (not residuals).
-2. Implements **robust outlier detection** (MAD Z-score > 3.5), highlighting outliers in red.
-3. Calculates the **individual RMSE** for each tube.
+The --fit_line option now implements 2-step iterative polynomial fitting and 
+robust outlier detection (MAD Z-score > 3.5), highlighting outliers from each 
+step with different shades of red.
 
 The output logic is:
 - Plot: If --output is provided, saves to file. Otherwise, attempts to display interactively (plt.show()).
 - RMSE: If --out_rmse is provided, saves to CSV. Otherwise, prints the table to the console.
 
 Usage:
-    python visualize_angles.py input.star --fit_line --output plot.png --out_rmse rmse.csv
+    python visualize_angles.py input.star --fit_line [--output plot.png] [--out_rmse rmse.csv]
 
 @Builab 2025
 """
@@ -26,6 +25,11 @@ import numpy as np
 import starfile
 from pathlib import Path
 import pandas as pd
+
+
+# Constants for Outlier Colors
+COLOR_OUTLIER_ITER_1 = '#990000' # Deep Red (most egregious)
+COLOR_OUTLIER_ITER_2 = '#ff6666' # Lighter Red (detected after refinement)
 
 
 def read_star(file_path: str):
@@ -41,11 +45,24 @@ def read_star(file_path: str):
 def fit_polynomial(x, y, order=2):
     """
     Fit polynomial to data and calculate residuals.
+    
+    Args:
+        x: X coordinates (particle indices)
+        y: Y coordinates (angle values)
+        order: Polynomial order (default: 2)
+    
+    Returns:
+        Tuple of (fitted_y, residuals, rmse)
     """
+    # Ensure there is enough data for fitting
+    if len(x) <= order:
+        return np.full_like(y, np.nan), np.full_like(y, np.nan), np.nan
+
     coeffs = np.polyfit(x, y, order)
     poly = np.poly1d(coeffs)
     fitted_y = poly(x)
     residuals = y - fitted_y
+    # Calculate RMSE only on the points used for the current fit
     rmse = np.sqrt(np.mean(residuals**2))
     return fitted_y, residuals, rmse
 
@@ -53,28 +70,112 @@ def fit_polynomial(x, y, order=2):
 def robust_mad_outlier_detection(residuals, threshold=3.5):
     """
     Detects outliers using the Modified Z-score based on the Median Absolute Deviation (MAD).
+    
+    Args:
+        residuals: 1D numpy array of residuals.
+        threshold: Modified Z-score threshold (default 3.5).
+        
+    Returns:
+        1D boolean array where True indicates an outlier.
     """
+    # Need enough points to reliably calculate MAD (5 is a typical minimum)
     if len(residuals) < 5: 
         return np.zeros_like(residuals, dtype=bool)
 
+    # 1. Calculate MAD (Median Absolute Deviation)
     median_residual = np.median(residuals)
     mad = np.median(np.abs(residuals - median_residual))
     
     if mad == 0:
+        # If MAD is 0, check if any point deviates from the median
         return np.abs(residuals - median_residual) > 1e-6 
 
-    # 0.6745 = 1/1.4826 for consistency with Gaussian Z-score
+    # 2. Calculate Modified Z-score (0.6745 is the correction factor)
     modified_z_score = 0.6745 * (residuals - median_residual) / mad
     
+    # 3. Apply Threshold
     is_outlier = np.abs(modified_z_score) > threshold
     return is_outlier
 
 
+def iterative_fit_and_detect(particle_indices, angles, order=2, n_iterations=2):
+    """
+    Performs iterative polynomial fitting and MAD outlier detection.
+    
+    Args:
+        particle_indices: Full array of x-coordinates (particle indices).
+        angles: Full array of y-coordinates (angle values).
+        order: Polynomial order.
+        n_iterations: Number of iterations to perform.
+        
+    Returns:
+        Tuple: (final_fitted_angles, total_outliers_mask, final_rmse, outliers_iter_1_mask)
+    """
+    
+    N = len(angles)
+    # Mask to track all outliers found across all iterations
+    total_outliers_mask = np.zeros(N, dtype=bool)
+    # Mask to specifically track outliers from the first iteration
+    outliers_iter_1_mask = np.zeros(N, dtype=bool)
+    
+    # Indices of points currently considered inliers for fitting
+    current_inlier_indices = np.arange(N)
+    
+    final_fitted_angles = np.full(N, np.nan)
+    final_rmse = np.nan
+    
+    for i in range(n_iterations):
+        
+        # 1. Get current inlier data
+        x_in = particle_indices[current_inlier_indices]
+        y_in = angles[current_inlier_indices]
+        
+        # Skip if not enough data remains
+        if len(x_in) <= order:
+            break
+            
+        # 2. Fit polynomial to inliers
+        coeffs = np.polyfit(x_in, y_in, order)
+        poly = np.poly1d(coeffs)
+        
+        # 3. Calculate fitted line and residuals for ALL original points
+        fitted_angles_all = poly(particle_indices)
+        residuals_all = angles - fitted_angles_all
+        
+        # 4. Detect outliers among the current inliers
+        # We only look for outliers among the points that HAVEN'T been excluded yet
+        residuals_for_detection = residuals_all[current_inlier_indices]
+        is_outlier_in_subset = robust_mad_outlier_detection(residuals_for_detection)
+        
+        # 5. Map detected outliers back to the original index space
+        outlier_indices_original = current_inlier_indices[is_outlier_in_subset]
+        
+        if len(outlier_indices_original) == 0:
+            # No new outliers found, stop iterating
+            final_fitted_angles = fitted_angles_all
+            final_rmse = np.sqrt(np.mean((angles[~total_outliers_mask] - fitted_angles_all[~total_outliers_mask])**2))
+            break
+            
+        # 6. Update the total outlier mask and the iteration 1 mask
+        total_outliers_mask[outlier_indices_original] = True
+        if i == 0:
+            outliers_iter_1_mask[outlier_indices_original] = True
+            
+        # 7. Update the current inlier indices for the next iteration
+        current_inlier_indices = np.where(~total_outliers_mask)[0]
+        
+        # If this is the last iteration, record the final fit and RMSE on the final inliers
+        if i == n_iterations - 1:
+            final_fitted_angles = fitted_angles_all
+            final_rmse = np.sqrt(np.mean((angles[~total_outliers_mask] - fitted_angles_all[~total_outliers_mask])**2))
+
+    return final_fitted_angles, total_outliers_mask, final_rmse, outliers_iter_1_mask
+
+
 def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_path=None):
     """
-    Plot Euler angles for all helical tubes in a star file.
+    Plot Euler angles for all helical tubes in a star file, with optional iterative fit and outlier detection.
     """
-    # Read star file
     print(f"Reading star file: {star_path}")
     df = read_star(star_path)
     
@@ -97,7 +198,7 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
     fig, axes = plt.subplots(3, 1, figsize=(12, 10))
     
     if fit_line:
-        fig.suptitle(f'Euler Angle Polynomial Fit & Outlier Detection (Order 2, Z-score > 3.5)\n{Path(star_path).name}', 
+        fig.suptitle(f'Euler Angle Iterative Polynomial Fit & Outlier Detection (Order 2, 2-Step MAD Z > 3.5)\n{Path(star_path).name}', 
                      fontsize=14, fontweight='bold')
     else:
         fig.suptitle(f'Euler Angles for Helical Tubes\n{Path(star_path).name}', 
@@ -107,8 +208,11 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
     angle_labels = ['Rot (°)', 'Tilt (°)', 'Psi (°)']
     
     tube_metrics = []
-    outlier_legend_added = False
     
+    # Flags to ensure legend entries are only added once
+    outlier_legend_iter_1_added = False
+    outlier_legend_iter_2_added = False
+
     # Plot each tube
     for idx, (tube_id, tube_data) in enumerate(grouped):
         color = colors[idx % len(colors)]
@@ -119,34 +223,49 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
             angles = tube_data[angle_col].values
             
             if fit_line:
-                # Fit polynomial (Order 2)
-                fitted_angles, residuals, rmse = fit_polynomial(particle_indices, angles, order=2)
-                tube_metric[f'RMSE_{angle_col}'] = rmse
+                # Perform 2-step iterative detection
+                fitted_angles, total_outliers_mask, final_rmse, outliers_iter_1_mask = \
+                    iterative_fit_and_detect(particle_indices, angles, order=2, n_iterations=2)
                 
-                # Robust Outlier Detection
-                is_outlier = robust_mad_outlier_detection(residuals)
+                tube_metric[f'RMSE_{angle_col}'] = final_rmse
                 
-                inlier_indices = particle_indices[~is_outlier]
-                inlier_angles = angles[~is_outlier]
-                outlier_indices = particle_indices[is_outlier]
-                outlier_angles = angles[is_outlier]
+                # Identify points for plotting
+                inlier_mask = ~total_outliers_mask
+                outlier_iter_2_mask = total_outliers_mask & ~outliers_iter_1_mask # Outliers found in step 2 only
                 
-                # Plot fitted line
+                inlier_indices = particle_indices[inlier_mask]
+                inlier_angles = angles[inlier_mask]
+                
+                outlier_iter_1_indices = particle_indices[outliers_iter_1_mask]
+                outlier_iter_1_angles = angles[outliers_iter_1_mask]
+                
+                outlier_iter_2_indices = particle_indices[outlier_iter_2_mask]
+                outlier_iter_2_angles = angles[outlier_iter_2_mask]
+
+                # 1. Plot fitted line (final, robust fit)
                 axes[ax_idx].plot(particle_indices, fitted_angles, 
                                 color=color, alpha=0.9, linewidth=2.0, linestyle='-',
                                 label=f'Tube {tube_id}' if ax_idx == 0 and n_tubes <= 10 else None)
                 
-                # Plot inliers (original angles)
+                # 2. Plot inliers (original angles)
                 axes[ax_idx].scatter(inlier_indices, inlier_angles, 
                                    color=color, alpha=0.5, s=10)
                                    
-                # Plot outliers (original angles) in RED
-                outlier_label = 'Outlier (Red)' if ax_idx == 0 and not outlier_legend_added else None
-                axes[ax_idx].scatter(outlier_indices, outlier_angles, 
-                                   color='red', marker='o', alpha=1.0, s=20, zorder=5,
-                                   label=outlier_label)
-                if outlier_label:
-                    outlier_legend_added = True
+                # 3. Plot 1st Iteration Outliers (Deep Red)
+                label_1 = 'Outlier (Iter 1 - Deep Red)' if ax_idx == 0 and not outlier_legend_iter_1_added else None
+                axes[ax_idx].scatter(outlier_iter_1_indices, outlier_iter_1_angles, 
+                                   color=COLOR_OUTLIER_ITER_1, marker='o', alpha=1.0, s=25, zorder=5,
+                                   label=label_1)
+                if label_1:
+                    outlier_legend_iter_1_added = True
+                
+                # 4. Plot 2nd Iteration Outliers (Lighter Red)
+                label_2 = 'Outlier (Iter 2 - Light Red)' if ax_idx == 0 and not outlier_legend_iter_2_added else None
+                axes[ax_idx].scatter(outlier_iter_2_indices, outlier_iter_2_angles, 
+                                   color=COLOR_OUTLIER_ITER_2, marker='s', alpha=1.0, s=20, zorder=4,
+                                   label=label_2)
+                if label_2:
+                    outlier_legend_iter_2_added = True
             
             else:
                 # Plot raw angles
@@ -180,6 +299,7 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
 
     
     if n_tubes <= 10 or fit_line:
+        # Combine tube colors and the two outlier markers in the legend
         axes[0].legend(loc='upper right', fontsize=8, ncol=2)
     
     plt.tight_layout()
@@ -233,7 +353,7 @@ Examples:
     parser.add_argument('--output', '-o', type=str, default=None,
                        help='Output plot file (PNG, PDF, SVG). If not specified, displays interactively (plt.show()).')
     parser.add_argument('--fit_line', action='store_true',
-                       help='Fit polynomial (order 2), plot the fitted line, highlight outliers (Robust Z-score > 3.5) in red, and calculate individual tube RMSE.')
+                       help='Fit polynomial (order 2), plot the fitted line, use 2-step iterative outlier detection, and calculate individual tube RMSE.')
     parser.add_argument('--out_rmse', type=str, default=None,
                        help='Output file to save individual tube RMSE values (CSV format). If not specified, prints to console.')
     

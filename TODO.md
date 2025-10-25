@@ -2,6 +2,7 @@
 - There can be another kinds of prediction (--dphi and --dz) like the filament model in ChimeraX (later) (Determine polarity). Need to validate
 - ChimeraX bundle (Does this worth the effort? Probably not)
 - Test with data
+- To fix the resample as it is not that accurate
 
 Less priorty
 - Do a basic rlnAnglePsi and rlnAngleRot for microtubule prediction (no template).
@@ -19,7 +20,11 @@ v0.9.3
  - Implement smooth_angles for predict.py and work so well
  
 v0.9.4
- - Finish combine_mtstar2relionwarp.py to combine the output file to a single star file used for Warp export
+ - Finish combine_mtstar.py to combine the output file to a single star file used for Warp export
  
 v0.9.5
  - Better name sanitization.
+
+v0.9.6
+ - Fix a lots of serious bug regarding resampling and imagePixelSize
+ - update visualize_star_angles.py

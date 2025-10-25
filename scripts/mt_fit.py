@@ -255,7 +255,6 @@ def run_fitting(file_path: str, args: argparse.Namespace, step_num: int = None) 
         min_distance_in_extension=args.min_dis_neighbor_curve_ang / pixel_size,
         max_distance_in_extension=args.max_dis_neighbor_curve_ang / pixel_size,
         min_number_growth=args.min_number_growth,
-        detector_pixel_size=detector_pixel_size
     )
     
     print_summary("Fitting Results", [

@@ -28,13 +28,13 @@ class TubeInfo:
         tube_id: int,
         coords: np.ndarray,
         tomo_name: str = "Unknown",
-        detector_pixel_size: Optional[float] = None
+        angpix: Optional[float] = None
     ):
         self.tube_id = tube_id
         self.coords = coords  # In Angstroms
         self.n_points = len(coords)
         self.tomo_name = tomo_name
-        self.detector_pixel_size = detector_pixel_size
+        self.angpix = angpix
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for backwards compatibility."""
@@ -43,7 +43,7 @@ class TubeInfo:
             'coords': self.coords,
             'n_points': self.n_points,
             'tomo_name': self.tomo_name,
-            'detector_pixel_size': self.detector_pixel_size
+            'angpix': self.angpix
         }
 
 
@@ -93,13 +93,7 @@ def extract_tube_info(
         else "Unknown"
     )
     
-    detector_pixel_size = (
-        tube_data['rlnDetectorPixelSize'].iloc[0]
-        if 'rlnDetectorPixelSize' in tube_data.columns and not tube_data['rlnDetectorPixelSize'].empty
-        else None
-    )
-
-    return TubeInfo(tube_id, coords, tomo_name, detector_pixel_size)
+    return TubeInfo(tube_id, coords, tomo_name, angpix)
 
 
 def calculate_average_step_size(coords: np.ndarray, n_points: int) -> float:
@@ -476,12 +470,6 @@ def fit_and_resample_tube(
         else "Unknown"
     )
     
-    detector_pixel_size = (
-        tube_data['rlnDetectorPixelSize'].iloc[0]
-        if 'rlnDetectorPixelSize' in tube_data.columns and not tube_data['rlnDetectorPixelSize'].empty
-        else None
-    )
-    
     # Determine primary axis (dimension with largest range)
     ranges = np.ptp(coords, axis=0)
     
@@ -508,8 +496,8 @@ def fit_and_resample_tube(
     resampled_points = resample(
         poly_y, poly_z, start, end, mode,
         tube_id - 1,  # cluster_id is 0-indexed in original code
-        tomo_name, sample_step, integration_step,
-        detector_pixel_size
+        tomo_name, sample_step, angpix,
+        integration_step
     )
     
     # Convert coordinates back from Angstroms to pixels
@@ -566,7 +554,7 @@ def refit_and_resample_all_tubes(
     
     # Create output DataFrame
     df_output = pd.DataFrame(all_resampled)
-    
+        
     print(f"  ✓ Resampled {df_output['rlnHelicalTubeID'].nunique()} tubes "
           f"into {len(df_output)} particles")
     
@@ -574,11 +562,9 @@ def refit_and_resample_all_tubes(
     required_cols = [
         'rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ',
         'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi',
-        'rlnHelicalTubeID', 'rlnTomoName'
+        'rlnHelicalTubeID', 'rlnTomoName', 'rlnImagePixelSize'
     ]
     
-    if 'rlnDetectorPixelSize' in df_output.columns:
-        required_cols.append('rlnDetectorPixelSize')
     
     # Fill missing columns with defaults
     for col in required_cols:
@@ -766,12 +752,13 @@ def connect_tubes(
     print("\n" + "="*60)
     print("TUBE CONNECTION PIPELINE")
     print("="*60)
-    
+        
     tubes_initial = df['rlnHelicalTubeID'].nunique()
     particles_initial = len(df)
     
     print(f"\nInitial data: {tubes_initial} tubes, {particles_initial} particles")
     print(f"\nConnection parameters:")
+    print(f"  Pixel Size:     {angpix:.1f} Å/pixel")
     print(f"  Overlap threshold:     {overlap_threshold:.1f} Å")
     print(f"  Extrapolation distance: {dist_extrapolate:.1f} Å")
     print(f"  Distance scaling:      {dist_scale}x per iteration")

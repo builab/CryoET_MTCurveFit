@@ -175,7 +175,7 @@ def resample(
     cluster_id: int,
     tomo_name: str,
     sample_step: float,
-    detector_pixel_size: Optional[float] = None,
+    angpix: float,
     integration_step: float = 1.0 
 ) -> List[Dict[str, Any]]:
     """Resample points along fitted 3D curve at specified step size."""
@@ -227,8 +227,8 @@ def resample(
                 'rlnTomoName': tomo_name
             }
             
-            if detector_pixel_size is not None:
-                point_data['rlnDetectorPixelSize'] = detector_pixel_size
+            if angpix is not None:
+                point_data['rlnImagePixelSize'] = angpix
                 
             resampled_points.append(point_data)
 
@@ -254,7 +254,6 @@ def seed_extension(
     max_distance_in_extension: float,
     min_number_growth: int,
     sample_step: float,
-    detector_pixel_size: Optional[float] = None,
     integration_step: float = 1.0 
 ) -> Tuple[List[int], List[Dict[str, Any]]]:
     """
@@ -381,7 +380,7 @@ def seed_extension(
         
         resampled_data = resample(
             poly_final_xy, poly_final_k, np.min(ind), np.max(ind),
-            mode, cluster_id, tomo_name, sample_step, detector_pixel_size
+            mode, cluster_id, tomo_name, sample_step, angpix
         )
         return cluster_indices, resampled_data
     else:
@@ -409,7 +408,6 @@ def fit_curves(
     min_distance_in_extension: float,
     max_distance_in_extension: float,
     min_number_growth: int,
-    detector_pixel_size: Optional[float] = None,
     cluster_id_offset: int = 0,
     integration_step: float = 1.0 
 ) -> Tuple[pd.DataFrame, np.ndarray, int]:
@@ -433,7 +431,6 @@ def fit_curves(
         min_distance_in_extension: Min distance between neighbors during growth (in pixels).
         max_distance_in_extension: Max distance between neighbors during growth (in pixels).
         min_number_growth: Min points to add during growth.
-        detector_pixel_size: Detector pixel size for output.
         cluster_id_offset: Offset for cluster IDs.
         integration_step: Integration step for curve length (in pixels).
 
@@ -492,7 +489,7 @@ def fit_curves(
                     angpix, max_angle_change_per_4nm,
                     max_distance_to_curve, min_distance_in_extension,
                     max_distance_in_extension, min_number_growth,
-                    sample_step, detector_pixel_size
+                    sample_step
                 )
                 
                 if final_indices:

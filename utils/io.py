@@ -89,22 +89,23 @@ def load_coordinates(
     coords = df[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].to_numpy(dtype=float)
     
     # Handle detector pixel size
-    if 'rlnDetectorPixelSize' in df.columns:
-        detector_pixel_size = df['rlnDetectorPixelSize'].iloc[0]
+    if 'rlnImagePixelSize' in df.columns:
+        pixel_size = df['rlnImagePixelSize'].iloc[0]
     else:
-        detector_pixel_size = angpix
-        print(f"  - rlnDetectorPixelSize not found, using --angpix: {angpix}")
+        pixel_size = angpix
+        print(f"  - rlnImagePixelSize not found, using --angpix: {angpix}")
     
     # Handle tomogram name (priority: rlnMicrographName > rlnTomoName > filename)
     tomo_name = df['rlnTomoName'].iloc[0]
         
-    return coords, tomo_name, detector_pixel_size
+    return coords, tomo_name, pixel_size
 
 
 def read_star(file_path: str) -> pd.DataFrame:
     """
-    Read STAR file into DataFrame.
-    Take care of name
+    Read STAR file (no optics group) into DataFrame.
+    Take care of rlnTomoName from either rlnMicrographName
+    Take care of rlnImagePixelSize from either rlnDetectorPixelSize
     
     Args:
         file_path: Path to STAR file.
@@ -113,12 +114,15 @@ def read_star(file_path: str) -> pd.DataFrame:
         DataFrame containing STAR file data.
     """
     df = starfile.read(file_path)
+    
     if 'rlnCoordinateX' not in df and 'particles' in df:
         df = df['particles']
 
     # --- Step 1: Rename column if needed ---
     if 'rlnMicrographName' in df.columns and 'rlnTomoName' not in df.columns:
         df = df.rename(columns={'rlnMicrographName': 'rlnTomoName'})
+        print('Rename rlnMicrographName to rlnTomoName')
+
         
     # --- Step 2: Remove trailing .tomostar first ---    
     if 'rlnTomoName' in df.columns:
@@ -128,7 +132,12 @@ def read_star(file_path: str) -> pd.DataFrame:
     else:
         raise ValueError("Input STAR file missing rlnTomoName column")
         
-    print(f'Read {file_path} and sanitize rlnTomoName')
+    # --- Step 3: Unify rlnImagePixelSize ---    
+    if 'rlnDetectorPixelSize' in df.columns and 'rlnImagePixelSize' not in df.columns:
+        df = df.rename(columns={'rlnDetectorPixelSize': 'rlnImagePixelSize'})
+        print('Rename rlnDetectorPixelSize to rlnImagePixelSize')
+        
+    print(f'Read {file_path} and sanitize')
 
     return df
 

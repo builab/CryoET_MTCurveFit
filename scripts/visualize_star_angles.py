@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Visualize Euler angles (Rot, Tilt, Psi) for helical tubes from RELION star file.
+Visualize Euler angles (Rot, Tilt, Psi) and inter-particle distances for helical tubes from RELION star file.
 
 This script creates a multi-panel visualization showing how the three Euler angles
-vary along each helical tube. Each tube is colored consistently across all subplots.
+and inter-particle distances vary along each helical tube. Each tube is colored consistently across all subplots.
 
 The --fit_line option now implements 2-step iterative polynomial fitting and 
 robust outlier detection (MAD Z-score > 3.5), highlighting outliers from each 
@@ -36,10 +36,55 @@ def read_star(file_path: str):
     """
     Read STAR file into DataFrame.
     """
-    df = starfile.read(file_path)
-    if 'rlnCoordinateX' not in df and 'particles' in df:
-        df = df['particles']
-    return df
+    data = starfile.read(file_path)
+    if isinstance(data, dict):
+        # Has optics block
+        if 'particles' in data:
+            df = data['particles']
+            optics = data.get('optics', None)
+            return df, optics
+        else:
+            return data, None
+    else:
+        # No optics block
+        return data, None
+
+
+def get_pixel_size(df, optics):
+    """
+    Get pixel size from optics block or from particle data.
+    """
+    if optics is not None and 'rlnImagePixelSize' in optics.columns:
+        return optics['rlnImagePixelSize'].iloc[0]
+    elif 'rlnImagePixelSize' in df.columns:
+        return df['rlnImagePixelSize'].iloc[0]
+    else:
+        raise ValueError("Could not find rlnImagePixelSize in optics or particles block")
+
+
+def calculate_distances(tube_data, pixel_size):
+    """
+    Calculate Euclidean distances between consecutive particles in Angstrom.
+    
+    Args:
+        tube_data: DataFrame for a single tube
+        pixel_size: Pixel size in Angstrom
+    
+    Returns:
+        Array of distances (length = n_particles - 1)
+    """
+    coords = tube_data[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].values
+    
+    # Calculate differences between consecutive points
+    diffs = np.diff(coords, axis=0)
+    
+    # Calculate Euclidean distances in pixels
+    distances_pixels = np.sqrt(np.sum(diffs**2, axis=1))
+    
+    # Convert to Angstrom
+    distances_angstrom = distances_pixels * pixel_size
+    
+    return distances_angstrom
 
 
 def fit_polynomial(x, y, order=2):
@@ -174,15 +219,29 @@ def iterative_fit_and_detect(particle_indices, angles, order=2, n_iterations=2):
 
 def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_path=None):
     """
-    Plot Euler angles for all helical tubes in a star file, with optional iterative fit and outlier detection.
+    Plot Euler angles and inter-particle distances for all helical tubes in a star file, 
+    with optional iterative fit and outlier detection.
+    Always uses 2x2 layout for the 4 plots (3 angles + distances).
     """
     print(f"Reading star file: {star_path}")
-    df = read_star(star_path)
+    df, optics = read_star(star_path)
     
     required_cols = ['rlnHelicalTubeID', 'rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi']
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
+    
+    # Check for distance plotting requirements
+    dist_cols = ['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']
+    missing_dist_cols = [col for col in dist_cols if col not in df.columns]
+    if missing_dist_cols:
+        raise ValueError(f"Missing required columns for distance calculation: {missing_dist_cols}")
+    
+    try:
+        pixel_size = get_pixel_size(df, optics)
+        print(f"Pixel size: {pixel_size} Å")
+    except ValueError as e:
+        raise ValueError(f"Cannot plot distances: {e}")
     
     print(f"Total particles: {len(df)}")
     print(f"Total tubes: {df['rlnHelicalTubeID'].nunique()}")
@@ -195,19 +254,22 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
     if n_tubes > 20:
         colors = plt.cm.hsv(np.linspace(0, 1, n_tubes))
     
-    fig, axes = plt.subplots(3, 1, figsize=(12, 10))
+    # Create figure with 2x2 layout
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    axes = axes.flatten()
     
     if fit_line:
         fig.suptitle(f'Euler Angle Iterative Polynomial Fit & Outlier Detection (Order 2, 2-Step MAD Z > 3.5)\n{Path(star_path).name}', 
                      fontsize=14, fontweight='bold')
     else:
-        fig.suptitle(f'Euler Angles for Helical Tubes\n{Path(star_path).name}', 
+        fig.suptitle(f'Helical Tube Analysis\n{Path(star_path).name}', 
                      fontsize=14, fontweight='bold')
     
     angle_names = ['rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi']
     angle_labels = ['Rot (°)', 'Tilt (°)', 'Psi (°)']
     
     tube_metrics = []
+    tube_statistics = []
     
     # Flags to ensure legend entries are only added once
     outlier_legend_iter_1_added = False
@@ -218,7 +280,16 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
         color = colors[idx % len(colors)]
         particle_indices = np.arange(len(tube_data))
         tube_metric = {'rlnHelicalTubeID': tube_id}
+        tube_stat = {'rlnHelicalTubeID': tube_id}
         
+        # Calculate statistics for angles
+        for angle_col in angle_names:
+            angles = tube_data[angle_col].values
+            tube_stat[f'{angle_col}_min'] = np.min(angles)
+            tube_stat[f'{angle_col}_max'] = np.max(angles)
+            tube_stat[f'{angle_col}_avg'] = np.mean(angles)
+        
+        # Plot angles
         for ax_idx, (angle_col, angle_label) in enumerate(zip(angle_names, angle_labels)):
             angles = tube_data[angle_col].values
             
@@ -275,11 +346,66 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
                 axes[ax_idx].scatter(particle_indices, angles, 
                                    color=color, alpha=0.5, s=10)
         
+        # Plot distances
+        distances = calculate_distances(tube_data, pixel_size)
+        # Distance indices are between particles (n-1 points)
+        distance_indices = particle_indices[:-1] + 0.5  # Plot at midpoints
+        
+        # Calculate statistics for distances
+        tube_stat['Distance_min'] = np.min(distances)
+        tube_stat['Distance_max'] = np.max(distances)
+        tube_stat['Distance_avg'] = np.mean(distances)
+        
+        if fit_line:
+            # Perform 2-step iterative detection with linear fit (order 1)
+            fitted_distances, total_outliers_mask_dist, final_rmse_dist, outliers_iter_1_mask_dist = \
+                iterative_fit_and_detect(distance_indices, distances, order=1, n_iterations=2)
+            
+            tube_metric['RMSE_Distance'] = final_rmse_dist
+            
+            # Identify points for plotting
+            inlier_mask_dist = ~total_outliers_mask_dist
+            outlier_iter_2_mask_dist = total_outliers_mask_dist & ~outliers_iter_1_mask_dist
+            
+            inlier_indices_dist = distance_indices[inlier_mask_dist]
+            inlier_distances = distances[inlier_mask_dist]
+            
+            outlier_iter_1_indices_dist = distance_indices[outliers_iter_1_mask_dist]
+            outlier_iter_1_distances = distances[outliers_iter_1_mask_dist]
+            
+            outlier_iter_2_indices_dist = distance_indices[outlier_iter_2_mask_dist]
+            outlier_iter_2_distances = distances[outlier_iter_2_mask_dist]
+            
+            # Plot fitted line (linear fit)
+            axes[3].plot(distance_indices, fitted_distances, 
+                        color=color, alpha=0.9, linewidth=2.0, linestyle='-',
+                        label=f'Tube {tube_id}' if n_tubes <= 10 else None)
+            
+            # Plot inliers
+            axes[3].scatter(inlier_indices_dist, inlier_distances, 
+                           color=color, alpha=0.5, s=10)
+            
+            # Plot outliers (use same legend logic as angles)
+            axes[3].scatter(outlier_iter_1_indices_dist, outlier_iter_1_distances, 
+                           color=COLOR_OUTLIER_ITER_1, marker='o', alpha=1.0, s=25, zorder=5)
+            
+            axes[3].scatter(outlier_iter_2_indices_dist, outlier_iter_2_distances, 
+                           color=COLOR_OUTLIER_ITER_2, marker='s', alpha=1.0, s=20, zorder=4)
+        else:
+            # Plot raw distances
+            axes[3].plot(distance_indices, distances, 
+                        color=color, alpha=0.7, linewidth=1.5,
+                        label=f'Tube {tube_id}' if n_tubes <= 10 else None)
+            axes[3].scatter(distance_indices, distances, 
+                           color=color, alpha=0.5, s=10)
+        
         if fit_line:
             tube_metrics.append(tube_metric)
+        
+        tube_statistics.append(tube_stat)
 
     
-    # Format subplots
+    # Format angle subplots
     for ax_idx, (angle_col, angle_label) in enumerate(zip(angle_names, angle_labels)):
         axes[ax_idx].set_xlabel('Particle Index (within tube)', fontsize=11)
         axes[ax_idx].set_ylabel(angle_label, fontsize=11)
@@ -296,7 +422,11 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
         y_min, y_max = axes[ax_idx].get_ylim()
         if y_min < 0 < y_max:
             axes[ax_idx].axhline(y=0, color='k', linestyle='--', alpha=0.3, linewidth=0.5)
-
+    
+    # Format distance subplot
+    axes[3].set_xlabel('Particle Index (within tube)', fontsize=11)
+    axes[3].set_ylabel('Inter-particle Distance (Å)', fontsize=11)
+    axes[3].grid(True, alpha=0.3)
     
     if n_tubes <= 10 or fit_line:
         # Combine tube colors and the two outlier markers in the legend
@@ -314,10 +444,35 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
     
     plt.close()
     
+    # --- PRINT STATISTICS FOR EACH TUBE ---
+    if tube_statistics:
+        stats_df = pd.DataFrame(tube_statistics)
+        print("\n=== Statistics per Helical Tube ===")
+        
+        # Reorder columns for better readability
+        cols = ['rlnHelicalTubeID', 
+                'rlnAngleRot_min', 'rlnAngleRot_max', 'rlnAngleRot_avg',
+                'rlnAngleTilt_min', 'rlnAngleTilt_max', 'rlnAngleTilt_avg',
+                'rlnAnglePsi_min', 'rlnAnglePsi_max', 'rlnAnglePsi_avg',
+                'Distance_min', 'Distance_max', 'Distance_avg']
+        stats_df = stats_df[cols]
+        stats_df.columns = ['TubeID', 
+                           'Rot_min', 'Rot_max', 'Rot_avg',
+                           'Tilt_min', 'Tilt_max', 'Tilt_avg',
+                           'Psi_min', 'Psi_max', 'Psi_avg',
+                           'Dist_min(Å)', 'Dist_max(Å)', 'Dist_avg(Å)']
+        
+        # Format numerical columns to 2 decimal places
+        for col in stats_df.columns:
+            if col != 'TubeID':
+                stats_df[col] = stats_df[col].map('{:.2f}'.format)
+        
+        print(stats_df.to_string(index=False))
+    
     # --- RMSE REPORTING LOGIC: Save to CSV if path provided, otherwise print to console ---
     if fit_line and tube_metrics:
         metrics_df = pd.DataFrame(tube_metrics)
-        metrics_df.columns = ['TubeID', 'RMSE_Rot_deg', 'RMSE_Tilt_deg', 'RMSE_Psi_deg']
+        metrics_df.columns = ['TubeID', 'RMSE_Rot_deg', 'RMSE_Tilt_deg', 'RMSE_Psi_deg', 'RMSE_Distance_Ang']
 
         if rmse_output_path:
             # Save to CSV
@@ -326,7 +481,7 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
         else:
             # Print to console
             print("\n--- Individual Tube RMSE (Tube Quality Check) ---")
-            metrics_df.columns = ['TubeID', 'RMSE_Rot (°)', 'RMSE_Tilt (°)', 'RMSE_Psi (°)']
+            metrics_df.columns = ['TubeID', 'RMSE_Rot (°)', 'RMSE_Tilt (°)', 'RMSE_Psi (°)', 'RMSE_Distance (Å)']
             
             # Format to 2 decimal places for printing
             for col in [c for c in metrics_df.columns if c.startswith('RMSE_')]:
@@ -336,7 +491,7 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Visualize Euler angles for helical tubes from RELION star file',
+        description='Visualize Euler angles and inter-particle distances for helical tubes from RELION star file',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -345,6 +500,9 @@ Examples:
   
   # Save fit/outliers plot to file AND save RMSE to CSV
   python visualize_star_angles.py particles.star --fit_line --output fit_plot.png --out_rmse tube_quality.csv
+  
+  # Plot angles and inter-particle distances without fitting
+  python visualize_star_angles.py particles.star
         """
     )
     

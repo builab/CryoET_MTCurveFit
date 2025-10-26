@@ -176,7 +176,7 @@ def resample(
     tomo_name: str,
     sample_step: float,
     angpix: float,
-    integration_step: float = 1.0 
+    integration_step: float = 0.1 
 ) -> List[Dict[str, Any]]:
     """Resample points along fitted 3D curve at specified step size."""
     resampled_points = []

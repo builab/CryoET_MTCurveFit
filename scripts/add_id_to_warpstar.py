@@ -189,18 +189,19 @@ def assign_random_subsets(df: pd.DataFrame) -> pd.Series:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Copy rlnHelicalTubeID from template to warp STAR file by matching nearest particles'
+        description='Copy rlnHelicalTubeID from template to warp STAR file by matching nearest particles. '
+                    'Automatically adds rlnRandomSubset for balanced half-set assignment.'
     )
-    parser.add_argument('--i', dest='input', required=True,
+    parser.add_argument('--input', required=True,
                         help='Input warp STAR file')
     parser.add_argument('--template', required=True,
                         help='Template STAR file with rlnHelicalTubeID')
-    parser.add_argument('--out', dest='output', required=True,
-                        help='Output STAR file')
-    parser.add_argument('--randomSubset', action='store_true',
-                        help='Add rlnRandomSubset column (1 or 2) with balanced assignment')
     
     args = parser.parse_args()
+    
+    # Generate output filename
+    input_path = Path(args.input)
+    output_path = input_path.parent / f"{input_path.stem}_with_id{input_path.suffix}"
     
     print(f"Reading warp STAR file: {args.input}")
     warp_star_data = starfile.read(args.input)
@@ -253,21 +254,20 @@ def main():
     warp_df['rlnOriginalIndex'] = range(1, len(warp_df) + 1)
 
     
-    # Assign random subsets if requested
-    if args.randomSubset:
-        print("\nAssigning random subsets...")
-        random_subsets = assign_random_subsets(warp_df)
-        warp_df['rlnRandomSubset'] = random_subsets
+    # Assign random subsets (now default)
+    print("\nAssigning random subsets...")
+    random_subsets = assign_random_subsets(warp_df)
+    warp_df['rlnRandomSubset'] = random_subsets
     
     # Write output
-    print(f"\nWriting output to: {args.output}")
+    print(f"\nWriting output to: {output_path}")
     if isinstance(warp_star_data, dict):
         # Preserve structure with optics block
         warp_star_data['particles'] = warp_df
-        starfile.write(warp_star_data, args.output, overwrite=True)
+        starfile.write(warp_star_data, output_path, overwrite=True)
     else:
         # Simple dataframe
-        starfile.write(warp_df, args.output, overwrite=True)
+        starfile.write(warp_df, output_path, overwrite=True)
     
     print("Done!")
 

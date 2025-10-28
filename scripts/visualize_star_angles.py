@@ -398,6 +398,8 @@ def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_pa
                         label=f'Tube {tube_id}' if n_tubes <= 10 else None)
             axes[3].scatter(distance_indices, distances, 
                            color=color, alpha=0.5, s=10)
+            axes[3].set_ylim(0, 100)
+
         
         if fit_line:
             tube_metrics.append(tube_metric)

@@ -128,7 +128,7 @@ def angle_evaluate(
     mode: int,
     angpix: float,
     max_angle_change_per_4nm: float,
-    integration_step: float = 1.0 
+    integration_step: float = 0.1 
 ) -> int:
     """
     Evaluate curvature of polynomial fit.
@@ -224,11 +224,9 @@ def resample(
                 'rlnAngleTilt': angle_zxy + 90,
                 'rlnAnglePsi': angle_yx,
                 'rlnHelicalTubeID': cluster_id + 1,
-                'rlnTomoName': tomo_name
+                'rlnTomoName': tomo_name,
+                'rlnImagePixelSize': angpix
             }
-            
-            if angpix is not None:
-                point_data['rlnImagePixelSize'] = angpix
                 
             resampled_points.append(point_data)
 
@@ -254,7 +252,7 @@ def seed_extension(
     max_distance_in_extension: float,
     min_number_growth: int,
     sample_step: float,
-    integration_step: float = 1.0 
+    integration_step: float = 0.1 
 ) -> Tuple[List[int], List[Dict[str, Any]]]:
     """
     Extend seed by iteratively fitting polynomial and adding nearby points.
@@ -409,7 +407,7 @@ def fit_curves(
     max_distance_in_extension: float,
     min_number_growth: int,
     cluster_id_offset: int = 0,
-    integration_step: float = 1.0 
+    integration_step: float = 0.1 
 ) -> Tuple[pd.DataFrame, np.ndarray, int]:
     """
     Core computational engine for curve fitting (I/O-free).

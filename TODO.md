@@ -1,8 +1,6 @@
 - For cilia (9), perform a renumber rlnHelicalID (later) cilia_cluster_renumber (Make a core utils sort.py). If > 9 filament, don't do it.
-- There can be another kinds of prediction (--dphi and --dz) like the filament model in ChimeraX (later) (Determine polarity). Need to validate
-- ChimeraX bundle (Does this worth the effort? Probably not)
 - Test with data
-- To fix the resample as it is not that accurate
+- Fit with spline line for more accurate? (Future version)
 
 Less priorty
 - Do a basic rlnAnglePsi and rlnAngleRot for microtubule prediction (no template).
@@ -29,4 +27,7 @@ v0.9.6
  
 v0.9.7
  - rename & refactor code
+
+v0.9.8
+ - improve accuracy of resample using better integration_step
 

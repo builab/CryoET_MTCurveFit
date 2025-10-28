@@ -136,8 +136,8 @@ def add_fit_arguments(parser: argparse.ArgumentParser) -> None:
                        help='Polynomial order for fitting (default: 3)')
     parser.add_argument('--min_seed', type=int, default=6,
                        help='Minimum seed points (default: 6)')
-    parser.add_argument('--sample_step', type=float, default=82.0,
-                       help='Resampling step in Angstroms (default: 82.0)')
+    parser.add_argument('--sample_step', type=float, default=83.0,
+                       help='Resampling step in Angstroms (default: 83.0)')
     
     # Advanced fit parameters (hidden from help)
     parser.add_argument('--max_dis_to_line_ang', type=float, default=50, help=argparse.SUPPRESS)
@@ -229,7 +229,7 @@ def run_fitting(file_path: str, args: argparse.Namespace, step_num: int = None) 
     pixel_size = args.angpix
     
     # Load coordinates
-    coords, tomo_name, detector_pixel_size = load_coordinates(file_path, pixel_size)
+    coords, tomo_name, pixel_size = load_coordinates(file_path, pixel_size)
     
     if coords is None:
         raise ValueError("Failed to load coordinates from input file")
@@ -242,7 +242,7 @@ def run_fitting(file_path: str, args: argparse.Namespace, step_num: int = None) 
         tomo_name=tomo_name,
         angpix=pixel_size,
         poly_order=args.poly_order,
-        sample_step=args.sample_step / (pixel_size*2),
+        sample_step=args.sample_step / pixel_size,
         integration_step=1.0 / pixel_size,
         min_seed=args.min_seed,
         max_distance_to_line=args.max_dis_to_line_ang / pixel_size,

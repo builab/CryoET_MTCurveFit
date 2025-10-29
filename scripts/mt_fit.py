@@ -28,7 +28,8 @@ from utils.connect import connect_tubes
 
 from utils.clean import (
     clean_tubes,
-    filter_short_tubes
+    filter_short_tubes,
+    filter_by_direction
 )
     
 from utils.predict import predict_angles
@@ -162,6 +163,10 @@ def add_clean_arguments(parser: argparse.ArgumentParser) -> None:
                    help='Minimum rlnAnglePsi angle in degrees (default: 0)')
     parser.add_argument('--psi_max', type=float, default=180.0,
                    help='Maximum rlnAnglePsi angle in degrees (default: 180)')
+    parser.add_argument('--direction_dev', type=float, default=0.0,
+                   help='Maximum range for deviation from median angle in degrees (default: 0 (do nothing))')
+    parser.add_argument('--direction_angle', type=str, default='Psi',
+                   help='Angle for median filtering (Rot/Tilt/Psi) (default: Psi)')
                    
                    
 def add_connect_arguments(parser: argparse.ArgumentParser) -> None:
@@ -298,7 +303,10 @@ def run_cleaning(df_input: pd.DataFrame, args: argparse.Namespace, step_num: int
         distance_threshold=args.dist_thres,
         margin=args.margin,
         psi_min=args.psi_min,
-        psi_max=args.psi_max)
+        psi_max=args.psi_max,
+        direction_angle=args.direction_angle,
+        direction_max_dev=args.direction_dev
+    )
 
     return df_filtered
 
@@ -346,11 +354,24 @@ def run_connection(
         dist_scale=args.dist_scale,
         debug=True
     )
-    
+    # Filter in bad direction if requested
+    if args.direction_dev > 0:
+        tubes_before = df_connected['rlnHelicalTubeID'].nunique()
+        df_cleaned = filter_by_direction(df_connected, args.direction_angle, args.direction_dev)
+        tubes_after = df_cleaned['rlnHelicalTubeID'].nunique()
+        tubes_removed = tubes_before - tubes_after
+ 
+        if tubes_removed > 0:
+            print_info(f"Filtered out {tubes_removed} tubes with direction deviation more than {args.direction_dev} degrees")
+            print_info(f"Final: {tubes_after} tubes, {len(df_final)} particles")
+    else:
+        df_cleaned = df_connected.copy()
+    		
+
     # Filter short tubes if requested
     if args.min_part_per_tube > 0:
-        tubes_before = df_connected['rlnHelicalTubeID'].nunique()
-        df_final = filter_short_tubes(df_connected, args.min_part_per_tube)
+        tubes_before = df_cleaned['rlnHelicalTubeID'].nunique()
+        df_final = filter_short_tubes(df_cleaned, args.min_part_per_tube)
         tubes_after = df_final['rlnHelicalTubeID'].nunique()
         tubes_removed = tubes_before - tubes_after
         

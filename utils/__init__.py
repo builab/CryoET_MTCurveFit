@@ -17,7 +17,8 @@ from .io import (
 
 from .clean import (
     clean_tubes,
-    filter_short_tubes
+    filter_short_tubes,
+    filter_by_direction
 )
 
 from .connect import (
@@ -34,6 +35,7 @@ __all__ = [
     # Clean functions
     'clean_tubes',
     'filter_short_tubes',
+    'filter_by_direction',
     #Connect functions
     'connect_tubes',
     # Predict functions

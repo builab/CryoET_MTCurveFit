@@ -1,6 +1,7 @@
 - For cilia (9), perform a renumber rlnHelicalID (later) cilia_cluster_renumber (Make a core utils sort.py). If > 9 filament, don't do it.
 - Test with data
 - Fit with spline line for more accurate? (Future version)
+- For the tip, perhaps a directional filter (the majority) will work better
 
 Less priorty
 - Do a basic rlnAnglePsi and rlnAngleRot for microtubule prediction (no template).
@@ -30,4 +31,6 @@ v0.9.7
 
 v0.9.8
  - improve accuracy of resample using better integration_step
+ - fix the error "x & y not the same length"
+ - implement direction_dev, which is quite good.
 

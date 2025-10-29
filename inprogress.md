@@ -48,6 +48,8 @@ Note: Increase the min_seed to 6 is a lot cleaner than 5 but might ignore some M
 ```bash
 mt_fit.py clean CCDC147C_001_particles_fitted.star --angpix 14 --dist_thres 50 --psi_min 30 --psi_max 150
 ```
+
+--direction_angle, --direction_dev
 --psi_min,--psi_max range of angle between (0 & 180) to keep. Use 30-150 to eliminate horizontal particles, bad in cryo-ET.
 
 ### Connect lines

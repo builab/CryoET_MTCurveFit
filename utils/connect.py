@@ -83,6 +83,11 @@ def extract_tube_info(
     # Convert coordinates from pixels to Angstroms
     coords = tube_data[['rlnCoordinateX', 'rlnCoordinateY', 'rlnCoordinateZ']].values * angpix
     
+    # Check for NaN or invalid values
+    if np.any(np.isnan(coords)) or np.any(np.isinf(coords)):
+        print(f"  Warning: Tube {tube_id} contains NaN or infinite coordinates. Skipping.")
+        return None
+    
     if len(coords) < MIN_POINTS_FOR_FITTING:
         return None
     
@@ -124,7 +129,7 @@ def extrapolate_trajectory(
     poly_order: int
 ) -> Optional[np.ndarray]:
     """
-    Fit polynomial to seed points and extrapolate trajectory forward.
+    Fit polynomial to seed points and extrapolate trajectory forward. Fix NaN error
     
     Args:
         coords: Coordinate array (N x 3) in Angstroms.
@@ -139,6 +144,10 @@ def extrapolate_trajectory(
     
     # Validate input
     if n_points < poly_order + 1 or min_seed < poly_order + 1:
+        return None
+    
+    # Check for NaN values
+    if np.any(np.isnan(coords)):
         return None
     
     # Calculate number of extrapolation steps
@@ -162,10 +171,14 @@ def extrapolate_trajectory(
     for dim in range(3):
         y_fit = coords[seed_start_idx:, dim]
         
+        # Double-check lengths match (defensive programming)
+        if len(t_fit) != len(y_fit):
+            return None
+        
         try:
             coeffs = np.polyfit(t_fit, y_fit, poly_order)
             extrapolated_coords[:, dim] = np.polyval(coeffs, t_extrapolate)
-        except np.linalg.LinAlgError:
+        except (np.linalg.LinAlgError, ValueError):
             return None
     
     return extrapolated_coords
@@ -336,7 +349,6 @@ def find_tube_connections(
                     dist_extrapolate,
                     poly_order
                 )
-                
                 if can_connect and min_dist < best_score:
                     best_score = min_dist
                     best_connection = {
@@ -616,7 +628,7 @@ def connect_tubes_once(
         dist_extrapolate,
         poly_order_seed
     )
-    
+
     # Debug mode: show top 5 closest tube pairs (regardless of connection threshold)
     if debug:
         print(f"\n    {'='*56}")
@@ -756,6 +768,7 @@ def connect_tubes(
     tubes_initial = df['rlnHelicalTubeID'].nunique()
     particles_initial = len(df)
     
+
     print(f"\nInitial data: {tubes_initial} tubes, {particles_initial} particles")
     print(f"\nConnection parameters:")
     print(f"  Pixel Size:     {angpix:.1f} Å/pixel")
@@ -795,6 +808,7 @@ def connect_tubes(
             debug=debug
         )
         
+
         tubes_after = df_current['rlnHelicalTubeID'].nunique()
         merges_this_iter = tubes_before - tubes_after
         total_merges += merges_this_iter
@@ -815,6 +829,7 @@ def connect_tubes(
     tubes_final = df_current['rlnHelicalTubeID'].nunique()
     particles_final = len(df_current)
     tubes_merged = tubes_initial - tubes_final
+    
     
     print("\n" + "="*60)
     print("CONNECTION PIPELINE COMPLETE")

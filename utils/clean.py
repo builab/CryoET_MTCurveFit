@@ -411,6 +411,127 @@ def filter_tubes_by_psi(df: pd.DataFrame, minAngle: float, maxAngle: float) -> p
     return df[mask_combined].copy()
     
 
+def filter_by_direction(
+    df: pd.DataFrame,
+    angle_types: str,
+    max_deviation: float
+) -> pd.DataFrame:
+    """
+    Filter particles by deviation from median angle(s).
+    
+    Keeps particles whose angle is within max_deviation degrees of the 
+    overall median angle for the specified angle type(s). Can filter by
+    multiple angles simultaneously (e.g., 'Rot,Tilt').
+    
+    Uses a two-stage filtering approach:
+    - If >= 40% of a tube's particles would be removed, delete the entire tube
+    - If < 40% of a tube's particles would be removed, delete only those particles
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing star file data with Euler angle columns
+    angle_types : str
+        Comma-separated angle types to filter by: 'Rot', 'Tilt', and/or 'Psi'
+        Examples: 'Rot', 'Tilt', 'Rot,Tilt', 'Rot,Tilt,Psi'
+    max_deviation : float
+        Maximum allowed deviation from median in degrees
+        
+    Returns
+    -------
+    pd.DataFrame
+        Filtered DataFrame with outlier particles/tubes removed
+        
+    Raises
+    ------
+    ValueError
+        If any angle_type is not one of 'Rot', 'Tilt', 'Psi' or if the 
+        corresponding column is missing from the DataFrame
+    """
+    # Map angle type to column name
+    angle_map = {
+        'Rot': 'rlnAngleRot',
+        'Tilt': 'rlnAngleTilt',
+        'Psi': 'rlnAnglePsi'
+    }
+    
+    # Parse comma-separated angle types
+    angle_list = [a.strip() for a in angle_types.split(',')]
+    
+    # Validate angle types
+    for angle_type in angle_list:
+        if angle_type not in angle_map:
+            raise ValueError(f"angle_type must be one of {list(angle_map.keys())}, got '{angle_type}'")
+    
+    # Check all required columns exist
+    required_cols = [angle_map[a] for a in angle_list]
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"DataFrame missing required columns: {missing_cols}")
+    
+    print(f"  Filtering by: {', '.join(angle_list)}")
+    print(f"  Max deviation allowed: {max_deviation:.2f}°")
+    
+    # Create combined mask for all angle types
+    combined_mask = np.ones(len(df), dtype=bool)
+    
+    for angle_type in angle_list:
+        angle_col = angle_map[angle_type]
+        angles = df[angle_col].values
+        
+        # Calculate median
+        median_angle = np.median(angles)
+        
+        # Calculate absolute deviation from median
+        deviations = np.abs(angles - median_angle)
+        
+        # Create mask for particles within threshold
+        mask = deviations <= max_deviation
+        
+        # Combine with existing mask (AND operation)
+        combined_mask = combined_mask & mask
+        
+        print(f"    {angle_type}: median={median_angle:.2f}°, range=[{angles.min():.1f}°, {angles.max():.1f}°]")
+    
+    # Invert mask to get outliers
+    outlier_mask = ~combined_mask
+    
+    print(f"  Total outliers identified: {outlier_mask.sum()} / {len(df)}")
+    
+    # Two-stage filtering based on per-tube outlier percentage
+    tubes_to_remove = set()
+    particles_to_remove = []
+    
+    for tube_id in df['rlnHelicalTubeID'].unique():
+        tube_mask = df['rlnHelicalTubeID'] == tube_id
+        tube_indices = np.where(tube_mask)[0]
+        
+        n_tube_particles = tube_mask.sum()
+        n_tube_outliers = (tube_mask & outlier_mask).sum()
+        outlier_fraction = n_tube_outliers / n_tube_particles
+        
+        if outlier_fraction >= 0.4:
+            # Remove entire tube
+            tubes_to_remove.add(tube_id)
+        else:
+            # Mark individual particles for removal
+            outlier_indices_in_tube = tube_indices[outlier_mask[tube_indices]]
+            particles_to_remove.extend(outlier_indices_in_tube)
+    
+    # Apply filtering
+    if tubes_to_remove:
+        print(f"  Removing {len(tubes_to_remove)} entire tubes (≥40% outliers)")
+        df = df[~df['rlnHelicalTubeID'].isin(tubes_to_remove)].copy()
+    
+    if particles_to_remove:
+        print(f"  Removing {len(particles_to_remove)} individual particles (<40% outliers per tube)")
+        df = df.drop(particles_to_remove).reset_index(drop=True)
+    
+    print(f"  Final: {len(df)} particles in {df['rlnHelicalTubeID'].nunique()} tubes")
+    
+    return df
+    
+
 def clean_tubes(
     df: pd.DataFrame,
     angpix: float,
@@ -418,13 +539,16 @@ def clean_tubes(
     margin: float = 50.0,
     psi_min: float = 0.0,
     psi_max: float = 180.0,
+    direction_angle: str = 'Psi',
+    direction_max_dev: float = 0.0,
 ) -> pd.DataFrame:
     """
     Comprehensive tube cleaning pipeline.
     
     Performs cleaning operations:
     1. Filters particles by rlnAnglePsi direction (if not default range)
-    2. Removes overlapping shorter tubes
+    2. Filters particles by angular deviation from median (if direction_max_dev > 0)
+    3. Removes overlapping shorter tubes
     
     Args:
         df: DataFrame with particle data.
@@ -433,6 +557,9 @@ def clean_tubes(
         margin: Margin for bounding box screening (default: 50 Angstroms).
         psi_min: Minimum rlnAnglePsi angle in degrees (default: 0).
         psi_max: Maximum rlnAnglePsi angle in degrees (default: 180).
+        direction_angle: Angle type for direction filtering: 'Rot', 'Tilt', or 'Psi' (default: 'Psi').
+        direction_max_dev: Maximum deviation from median angle in degrees (default: 0, disabled).
+                          Set to > 0 to enable direction filtering.
     
     Returns:
         Cleaned DataFrame.
@@ -449,11 +576,24 @@ def clean_tubes(
     print(f"\nInitial data: {tubes_initial} tubes, {particles_initial} particles")
     
     # Determine if psi filtering should be applied
-    filter_psi = not (psi_min == 0.0 and psi_max == 180.0)
+    apply_psi_filter = not (psi_min == 0.0 and psi_max == 180.0)
+    
+    # Determine if direction filtering should be applied
+    apply_direction_filter = direction_max_dev > 0.0
+    
+    # Calculate total number of steps
+    total_steps = 1  # Overlap detection is always done
+    if apply_psi_filter:
+        total_steps += 1
+    if apply_direction_filter:
+        total_steps += 1
+    
+    current_step = 0
     
     # Step 1: Filter by psi direction
-    if filter_psi and 'rlnAnglePsi' in df.columns:
-        print(f"\n[1/2] Psi direction filtering (range: [{psi_min:.1f}°, {psi_max:.1f}°])")
+    if apply_psi_filter and 'rlnAnglePsi' in df.columns:
+        current_step += 1
+        print(f"\n[{current_step}/{total_steps}] Psi direction filtering (range: [{psi_min:.1f}°, {psi_max:.1f}°])")
         print("-" * 60)
         
         particles_before = len(df)
@@ -467,9 +607,25 @@ def clean_tubes(
         else:
             print(f"  ✓ All particles within angular range")
     
-    # Step 2: Remove overlapping tubes
-    step_num = 2 if filter_psi else 1
-    print(f"\n[{step_num}/2] Overlap detection (threshold: {distance_threshold:.1f} Å)")
+    # Step 2: Filter by angular deviation from median
+    if apply_direction_filter:
+        current_step += 1
+        print(f"\n[{current_step}/{total_steps}] Direction filtering by {direction_angle} deviation (max: {direction_max_dev:.1f}°)")
+        print("-" * 60)
+        
+        particles_before = len(df)
+        df = filter_by_direction(df, direction_angle, direction_max_dev)
+        particles_after = len(df)
+        particles_removed = particles_before - particles_after
+        
+        if particles_removed > 0:
+            print(f"  ✓ Filtered by {direction_angle} deviation")
+        else:
+            print(f"  ✓ All particles within deviation threshold")
+    
+    # Step 3: Remove overlapping tubes
+    current_step += 1
+    print(f"\n[{current_step}/{total_steps}] Overlap detection (threshold: {distance_threshold:.1f} Å)")
     print("-" * 60)
     
     overlap_analysis = analyze_tube_overlaps(df, margin, angpix)

@@ -9,12 +9,15 @@ The --fit_line option now implements 2-step iterative polynomial fitting and
 robust outlier detection (MAD Z-score > 3.5), highlighting outliers from each 
 step with different shades of red.
 
+The --histogram option plots distributions of angles across all particles regardless of tube ID.
+
 The output logic is:
 - Plot: If --output is provided, saves to file. Otherwise, attempts to display interactively (plt.show()).
 - RMSE: If --out_rmse is provided, saves to CSV. Otherwise, prints the table to the console.
 
 Usage:
     python visualize_angles.py input.star --fit_line [--output plot.png] [--out_rmse rmse.csv]
+    python visualize_angles.py input.star --histogram [--output hist.png]
 
 @Builab 2025
 """
@@ -215,6 +218,85 @@ def iterative_fit_and_detect(particle_indices, angles, order=2, n_iterations=2):
             final_rmse = np.sqrt(np.mean((angles[~total_outliers_mask] - fitted_angles_all[~total_outliers_mask])**2))
 
     return final_fitted_angles, total_outliers_mask, final_rmse, outliers_iter_1_mask
+
+
+def plot_angle_histograms(star_path, output_path=None):
+    """
+    Plot histograms of Euler angles across all particles.
+    
+    Args:
+        star_path: Path to the STAR file
+        output_path: Optional output file path for saving the plot
+    """
+    print(f"Reading star file: {star_path}")
+    df, optics = read_star(star_path)
+    
+    required_cols = ['rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi']
+    missing_cols = [col for col in required_cols if col not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required columns: {missing_cols}")
+    
+    print(f"Total particles: {len(df)}")
+    if 'rlnHelicalTubeID' in df.columns:
+        print(f"Total tubes: {df['rlnHelicalTubeID'].nunique()}")
+    
+    # Create figure with 1x3 horizontal layout
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    
+    fig.suptitle(f'Euler Angle Distributions (All Particles)\n{Path(star_path).name}', 
+                 fontsize=14, fontweight='bold')
+    
+    angle_names = ['rlnAngleRot', 'rlnAngleTilt', 'rlnAnglePsi']
+    angle_labels = ['Rot (°)', 'Tilt (°)', 'Psi (°)']
+    
+    # Plot histograms for each angle
+    for ax_idx, (angle_col, angle_label) in enumerate(zip(angle_names, angle_labels)):
+        angles = df[angle_col].values
+        
+        # Calculate statistics
+        mean_val = np.mean(angles)
+        median_val = np.median(angles)
+        std_val = np.std(angles)
+        
+        # Plot histogram
+        n, bins, patches = axes[ax_idx].hist(angles, bins=50, color='steelblue', 
+                                             alpha=0.7, edgecolor='black')
+        
+        # Add vertical lines for mean and median
+        axes[ax_idx].axvline(mean_val, color='red', linestyle='--', 
+                            linewidth=2, label=f'Mean: {mean_val:.1f}°')
+        axes[ax_idx].axvline(median_val, color='orange', linestyle='--', 
+                            linewidth=2, label=f'Median: {median_val:.1f}°')
+        
+        # Add statistics text box
+        textstr = f'n = {len(angles)}\nμ = {mean_val:.2f}°\nσ = {std_val:.2f}°'
+        axes[ax_idx].text(0.02, 0.98, textstr, transform=axes[ax_idx].transAxes,
+                         fontsize=10, verticalalignment='top',
+                         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+        
+        axes[ax_idx].set_xlabel(angle_label, fontsize=11)
+        axes[ax_idx].set_ylabel('Count', fontsize=11)
+        axes[ax_idx].legend(loc='upper right', fontsize=9)
+        axes[ax_idx].grid(True, alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    
+    # Save or show plot
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        print(f"Histogram plot saved to: {output_path}")
+    else:
+        plt.show()
+    
+    plt.close()
+    
+    # Print summary statistics
+    print("\n=== Overall Statistics (All Particles) ===")
+    print(f"\nEuler Angles:")
+    for angle_col, angle_label in zip(angle_names, angle_labels):
+        angles = df[angle_col].values
+        print(f"  {angle_label:12s}: μ={np.mean(angles):7.2f}°  σ={np.std(angles):7.2f}°  "
+              f"median={np.median(angles):7.2f}°  range=[{np.min(angles):7.2f}, {np.max(angles):7.2f}]")
 
 
 def plot_tube_angles(star_path, output_path=None, fit_line=False, rmse_output_path=None):
@@ -505,6 +587,9 @@ Examples:
   
   # Plot angles and inter-particle distances without fitting
   python visualize_star_angles.py particles.star
+  
+  # Plot histograms of angle distributions (all particles)
+  python visualize_star_angles.py particles.star --histogram --output hist.png
         """
     )
     
@@ -514,6 +599,8 @@ Examples:
                        help='Output plot file (PNG, PDF, SVG). If not specified, displays interactively (plt.show()).')
     parser.add_argument('--fit_line', action='store_true',
                        help='Fit polynomial (order 2), plot the fitted line, use 2-step iterative outlier detection, and calculate individual tube RMSE.')
+    parser.add_argument('--histogram', action='store_true',
+                       help='Plot histograms of angle distributions across all particles (regardless of tube ID). Cannot be used with --fit_line.')
     parser.add_argument('--out_rmse', type=str, default=None,
                        help='Output file to save individual tube RMSE values (CSV format). If not specified, prints to console.')
     
@@ -522,8 +609,18 @@ Examples:
     if not Path(args.input).exists():
         parser.error(f"Input file not found: {args.input}")
     
+    # Check for incompatible options
+    if args.fit_line and args.histogram:
+        parser.error("--fit_line and --histogram cannot be used together. Fitting is done per-tube, while histograms aggregate all particles.")
+    
+    if args.histogram and args.out_rmse:
+        parser.error("--out_rmse cannot be used with --histogram (RMSE is only calculated with --fit_line)")
+    
     try:
-        plot_tube_angles(args.input, args.output, args.fit_line, args.out_rmse)
+        if args.histogram:
+            plot_angle_histograms(args.input, args.output)
+        else:
+            plot_tube_angles(args.input, args.output, args.fit_line, args.out_rmse)
     except Exception as e:
         print(f"Error: {e}")
         return 1
